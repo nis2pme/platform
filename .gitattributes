@@ -1,0 +1,21 @@
+# Normalizar line endings: LF no repo, CRLF no checkout Windows
+* text=auto
+
+# Forçar LF em ficheiros executados em Linux — nunca CRLF
+*.sh    text eol=lf
+*.py    text eol=lf
+*.sql   text eol=lf
+
+# Binários — sem conversão
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.ico   binary
+*.pdf   binary
+*.zip   binary
+*.gz    binary
+*.tar   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.eot   binary

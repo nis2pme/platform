@@ -1,0 +1,122 @@
+[
+    {
+    "id": "politica_ciberseguranca",
+    "titulo": {
+      "pt": "Política de Cibersegurança",
+      "en": "Cybersecurity Policy"
+    },
+    "descricao": {
+      "pt": "Modelo de política de cibersegurança adaptado às obrigações NIS2/DL 125/2025.",
+      "en": "Cybersecurity policy template aligned with NIS2/DL 125/2025 obligations."
+    },
+    "ficheiros": {
+      "pt": "pt/politica_ciberseguranca_pme.docx",
+      "en": "en/cybersecurity_policy_pme.docx"
+    }
+  },
+      {
+    "id": "politica_controlo_acessos",
+    "titulo": {
+      "pt": "Política de Controlo de Acessos",
+      "en": "Access Control Policy"
+    },
+    "descricao": {
+      "pt": "Modelo de política de controlo de acessos adaptado às obrigações NIS2/DL 125/2025.",
+      "en": "Access control policy template aligned with NIS2/DL 125/2025 obligations."
+    },
+    "ficheiros": {
+      "pt": "pt/politica_controlo_acessos_pme.docx",
+      "en": "en/access_control_policy_pme.docx"
+    }
+  },
+      {
+    "id": "politica_gestao_ativos",
+    "titulo": {
+      "pt": "Política de Gestão de Ativos",
+      "en": "Asset Management Policy"
+    },
+    "descricao": {
+      "pt": "Modelo de política de gestão de ativos adaptado às obrigações NIS2/DL 125/2025.",
+      "en": "Asset management policy template aligned with NIS2/DL 125/2025 obligations."
+    },
+    "ficheiros": {
+      "pt": "pt/politica_gestao_ativos_pme.docx",
+      "en": "en/asset_management_policy_pme.docx"
+    }
+  },
+    {
+    "id": "politica_backup",
+    "titulo": {
+      "pt": "Política de Backup",
+      "en": "Backup Policy"
+    },
+    "descricao": {
+      "pt": "Modelo de política de backup adaptado às obrigações NIS2/DL 125/2025.",
+      "en": "Backup policy template aligned with NIS2/DL 125/2025 obligations."
+    },
+    "ficheiros": {
+      "pt": "pt/politica_backup_pme.docx",
+      "en": "en/backup_policy_pme.docx"
+    }
+  },
+    {
+    "id": "politica_palavras_passe",
+    "titulo": {
+      "pt": "Política de Palavras-passe",
+      "en": "Password Policy"
+    },
+    "descricao": {
+      "pt": "Modelo de política de palavras-passe adaptado às obrigações NIS2/DL 125/2025.",
+      "en": "Password policy template aligned with NIS2/DL 125/2025 obligations."
+    },
+    "ficheiros": {
+      "pt": "pt/politica_palavras_passe_pme.docx",
+      "en": "en/password_policy_pme.docx"
+    }
+  },
+      {
+    "id": "politica_seguranca_rede",
+    "titulo": {
+      "pt": "Política de Segurança de Rede",
+      "en": "Network Security Policy"
+    },
+    "descricao": {
+      "pt": "Modelo de política de segurança de rede adaptado às obrigações NIS2/DL 125/2025.",
+      "en": "Network security policy template aligned with NIS2/DL 125/2025 obligations."
+    },
+    "ficheiros": {
+      "pt": "pt/politica_seguranca_rede_pme.docx",
+      "en": "en/network_security_policy_pme.docx"
+    }
+  },
+      {
+    "id": "politica_vulnerabilidades_patches",
+    "titulo": {
+      "pt": "Política de Vulnerabilidades e Patches",
+      "en": "Vulnerability and Patch Policy"
+    },
+    "descricao": {
+      "pt": "Modelo de política de vulnerabilidades e patches adaptado às obrigações NIS2/DL 125/2025.",
+      "en": "Vulnerability and patch policy template aligned with NIS2/DL 125/2025 obligations."
+    },
+    "ficheiros": {
+      "pt": "pt/politica_vuln_patch_pme.docx",
+      "en": "en/vulnerability_patch_policy_pme.docx"
+    }
+  },
+      {
+    "id": "plano_resposta_incidentes",
+    "titulo": {
+      "pt": "Plano de Resposta a Incidentes",
+      "en": "Incident Response Plan"
+    },
+    "descricao": {
+      "pt": "Modelo de plano de resposta a incidentes adaptado às obrigações NIS2/DL 125/2025.",
+      "en": "Incident response plan template aligned with NIS2/DL 125/2025 obligations."
+    },
+    "ficheiros": {
+      "pt": "pt/plano_resposta_incidente_pme.docx",
+      "en": "en/incident_response_plan_pme.docx"
+    }
+  }
+]

@@ -1,0 +1,2 @@
+Coloque aqui o ficheiro DOCX do template "Política de Segurança da Informação" (PT).
+Nome esperado pelo sistema: politica_seguranca.docx

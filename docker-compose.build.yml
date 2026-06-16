@@ -1,0 +1,114 @@
+# ============================================================
+# NIS2PME — On-Prem Deployment (BUILD FROM SOURCE)
+#
+# For maintainers / advanced users who want to build the images
+# locally instead of pulling them from GHCR.
+#
+#   docker compose -f docker-compose.build.yml up -d --build
+#
+# The default docker-compose.yml pulls pre-built images from GHCR
+# and is what end users should use.
+# ============================================================
+
+services:
+
+  db:
+    image: postgres:16-alpine
+    container_name: nis2pme_db
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      POSTGRES_USER: ${DB_USER:-nis2pme}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Definir DB_PASSWORD no ficheiro .env}
+      POSTGRES_DB: ${DB_NAME:-nis2pme}
+    volumes:
+      - nis2pme_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nis2pme -d nis2pme"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - nis2pme_net
+
+  backend:
+    build:
+      # Context is the docker/ root so the frameworks/ folder is baked into the image
+      context: .
+      dockerfile: backend/Dockerfile
+    image: ghcr.io/nis2pme/backend:latest
+    container_name: nis2pme_backend
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    env_file:
+      - .env
+    environment:
+      # Estas variáveis sobrepõem o .env — não alterar aqui
+      DATABASE_URL: postgresql://${DB_USER:-nis2pme}:${DB_PASSWORD}@db:5432/${DB_NAME:-nis2pme}
+      DEPLOYMENT_MODE: onprem
+      FRAMEWORKS_DIR: /app/frameworks
+      NGINX_CONFIG_DIR: /app/nginx_config
+      # CORS_ORIGINS não definido aqui: auto-derivado de APP_URL pelo backend
+    volumes:
+      - nis2pme_uploads:/app/uploads
+      # As definições de frameworks são incorporadas na imagem — sem bind-mount.
+      - nis2pme_nginx:/app/nginx_config
+      # Secrets auto-gerados na primeira execução (JWT keys, Fernet keys)
+      - nis2pme_data:/app/data
+      # Permite ao wizard de setup gravar configuração SMTP no .env do host
+      - ./.env:/app/.env
+      # Certificado TLS próprio (opcional — preenchido pelo installer quando TLS_MODE=custom)
+      - ./certs:/app/host_certs:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 240s
+    networks:
+      - nis2pme_net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: ghcr.io/nis2pme/frontend:latest
+    container_name: nis2pme_frontend
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ports:
+      - "${PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - nis2pme_nginx:/run/nginx_config
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - nis2pme_net
+
+volumes:
+  nis2pme_pgdata:
+  nis2pme_uploads:
+  nis2pme_nginx:
+  nis2pme_data:
+
+networks:
+  nis2pme_net:
+    driver: bridge

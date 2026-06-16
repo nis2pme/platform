@@ -1,0 +1,1558 @@
+# =============================================================================
+# Seed data — Domínios e Controlos UCF (Universal Control Framework)
+# Baseado no CyFun / NIS2 / DL 125/2025 / QNCS 2026
+#
+# Estrutura por controlo:
+#   codigo, dominio, titulo, descricao_simples, critico,
+#   nivel_minimo_base/importante/essencial, ordem, mapeamento
+#   niveis:
+#     <1-5>:
+#       descricao            ← o que significa este nível para este controlo
+#       guia_implementacao   ← Medida de Cibersegurança (passos) para este nível
+#       exemplos_evidencias  ← Critério de Verificação para este nível
+#       checks:              ← indicadores verificáveis deste nível
+#         - descricao: ...
+#           obrigatorio: true|false
+# =============================================================================
+
+dominios:
+  - codigo: ID
+    nome: Identificar
+    descricao: >
+      Desenvolver uma compreensão organizacional para gerir o risco de cibersegurança
+      nos sistemas, ativos, dados e capacidades.
+    ordem: 1
+
+  - codigo: PR
+    nome: Proteger
+    descricao: >
+      Desenvolver e implementar salvaguardas adequadas para assegurar a entrega
+      de serviços de infraestrutura crítica.
+    ordem: 2
+
+  - codigo: DE
+    nome: Detetar
+    descricao: >
+      Desenvolver e implementar atividades adequadas para identificar a ocorrência
+      de um evento de cibersegurança.
+    ordem: 3
+
+  - codigo: RS
+    nome: Responder
+    descricao: >
+      Desenvolver e implementar atividades adequadas para agir em relação
+      a um evento de cibersegurança detetado.
+    ordem: 4
+
+  - codigo: RC
+    nome: Recuperar
+    descricao: >
+      Desenvolver e implementar atividades adequadas para manter planos de resiliência
+      e repor capacidades e serviços afetados.
+    ordem: 5
+
+controlos:
+  # ── IDENTIFICAR ────────────────────────────────────────────────────────────
+  - codigo: ID.AM-01
+    dominio: ID
+    titulo: Inventário de hardware e software
+    descricao_simples: >
+      A organização mantém um registo atualizado de todos os equipamentos e programas
+      informáticos utilizados no negócio.
+    critico: false
+    nivel_minimo_base: 2
+    nivel_minimo_importante: 3
+    nivel_minimo_essencial: 4
+    ordem: 1
+    mapeamento:
+      iso27001: ["A.8.1"]
+      nist_csf: ["ID.AM-1", "ID.AM-2"]
+      dl125: ["Art.21º(2)(g)"]
+    niveis:
+      1:
+        descricao: "Nenhum inventário formal existe. O conhecimento dos ativos é informal e baseado na memória."
+        guia_implementacao:
+          - "1. Identificar todos os equipamentos (computadores, servidores, dispositivos de rede, móveis)."
+          - "2. Identificar todos os programas instalados nesses equipamentos."
+          - "3. Criar uma folha de cálculo ou usar uma ferramenta de inventário."
+          - "4. Registar: nome, função, sistema operativo, versão, responsável."
+          - "5. Definir responsável por manter o inventário atualizado."
+        exemplos_evidencias:
+          - "Ficheiro Excel/Google Sheets com inventário de hardware e software"
+          - "Screenshot de ferramenta de gestão de ativos (ex: Lansweeper, OCS Inventory)"
+          - "Documento Word com lista de equipamentos e software aprovado"
+        checks:
+          - descricao: "Existe uma lista de todos os computadores e servidores em uso na organização."
+            obrigatorio: true
+          - descricao: "Existe uma lista do software instalado nos equipamentos principais."
+            obrigatorio: true
+          - descricao: "A lista inclui pelo menos: nome do equipamento, função e responsável."
+            obrigatorio: true
+          - descricao: "A lista está guardada num local acessível às pessoas responsáveis."
+            obrigatorio: false
+          - descricao: "Existe alguém designado como responsável por atualizar a lista."
+            obrigatorio: false
+      2:
+        descricao: "Existe uma lista básica de equipamentos principais, atualizada manualmente quando necessário."
+        guia_implementacao:
+          - "1. Formalizar o inventário com campos de responsável, localização e data de aquisição."
+          - "2. Definir um processo de atualização (ex: sempre que há entrada/saída de equipamento)."
+          - "3. Incluir dispositivos móveis e equipamentos de escritório remoto."
+          - "4. Categorizar por criticidade para o negócio."
+          - "5. Documentar o software licenciado vs. gratuito/open-source."
+        exemplos_evidencias:
+          - "Inventário formalizado com responsável e data de última atualização"
+          - "Procedimento escrito para atualizar o inventário em compras e abates"
+          - "Categoria de criticidade atribuída a cada ativo"
+        checks:
+          - descricao: "O inventário inclui todos os dispositivos móveis (telemóveis, tablets) de uso profissional."
+            obrigatorio: true
+          - descricao: "O inventário tem uma data de última revisão documentada."
+            obrigatorio: true
+          - descricao: "O inventário indica a criticidade de cada ativo para o negócio."
+            obrigatorio: false
+          - descricao: "Existe um processo definido para registar novas aquisições no inventário."
+            obrigatorio: false
+          - descricao: "O inventário está sincronizado com o processo de compras."
+            obrigatorio: false
+      3:
+        descricao: "Inventário completo e estruturado, atualizado trimestralmente, com campos de responsável e versão."
+        guia_implementacao:
+          - "1. Implementar uma ferramenta de inventário automatizada (ex: OCS Inventory, Snipe-IT)."
+          - "2. Incluir ativos cloud e serviços SaaS no inventário."
+          - "3. Estabelecer processo de reconciliação trimestral."
+          - "4. Integrar inventário com processo de gestão de mudanças."
+          - "5. Reportar métricas de cobertura do inventário à gestão."
+        exemplos_evidencias:
+          - "Ferramenta de inventário automático com relatório de cobertura"
+          - "Relatório trimestral de revisão e reconciliação do inventário"
+          - "Inventário de serviços cloud e SaaS aprovados"
+        checks:
+          - descricao: "É utilizada uma ferramenta de inventário automatizado."
+            obrigatorio: true
+          - descricao: "O inventário inclui ativos cloud e serviços SaaS."
+            obrigatorio: true
+          - descricao: "O inventário é revisto e reconciliado trimestralmente."
+            obrigatorio: true
+          - descricao: "Existem métricas de cobertura do inventário (% de ativos conhecidos)."
+            obrigatorio: false
+          - descricao: "O inventário está integrado com o processo de gestão de mudanças."
+            obrigatorio: false
+      4:
+        descricao: "Inventário integrado com processos de aquisição — qualquer novo ativo é registado automaticamente."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      5:
+        descricao: "Inventário automático em tempo real, com alertas de desvios e integração com gestão de vulnerabilidades."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+
+  - codigo: ID.AM-02
+    dominio: ID
+    titulo: Classificação e gestão de ativos de informação
+    descricao_simples: >
+      A organização identifica e classifica os dados e informações críticos para o negócio,
+      sabendo onde estão guardados e quem pode aceder.
+    critico: false
+    nivel_minimo_base: 2
+    nivel_minimo_importante: 3
+    nivel_minimo_essencial: 4
+    ordem: 2
+    mapeamento:
+      iso27001: ["A.8.2"]
+      nist_csf: ["ID.AM-5"]
+      dl125: ["Art.21º(2)(g)"]
+    niveis:
+      1:
+        descricao: "Sem classificação formal. Todos os dados são tratados da mesma forma."
+        guia_implementacao:
+          - "1. Listar os tipos de dados que a organização processa (dados de clientes, financeiros, contratos, etc.)."
+          - "2. Classificar por criticidade: público, interno, confidencial, secreto."
+          - "3. Identificar onde cada tipo de dado está guardado (servidor, cloud, email, papel)."
+          - "4. Definir quem pode aceder a cada classificação."
+          - "5. Comunicar a política de classificação a todos os colaboradores."
+        exemplos_evidencias:
+          - "Documento de política de classificação de informação"
+          - "Mapa de fluxos de dados ou registo de tratamento de dados"
+          - "Inventário de repositórios de dados com classificação atribuída"
+        checks:
+          - descricao: "Existe uma lista dos principais tipos de dados que a organização utiliza (ex: dados de clientes, financeiros)."
+            obrigatorio: true
+          - descricao: "Cada tipo de dado tem uma classificação de sensibilidade (ex: confidencial, interno, público)."
+            obrigatorio: true
+          - descricao: "É sabido onde estão guardados os dados mais sensíveis da organização."
+            obrigatorio: true
+          - descricao: "Existe um documento ou email que comunica as regras básicas de manuseamento de dados aos colaboradores."
+            obrigatorio: false
+          - descricao: "Existe um responsável pela gestão dos dados sensíveis."
+            obrigatorio: false
+      2:
+        descricao: "Classificação informal por tipo (ex: 'dados de clientes são confidenciais')."
+        guia_implementacao:
+          - "1. Formalizar a política de classificação em documento aprovado pela gestão."
+          - "2. Etiquetar fisicamente/digitalmente documentos com a sua classificação."
+          - "3. Definir regras de manuseamento por nível (quem pode aceder, como partilhar, como destruir)."
+          - "4. Mapear os fluxos de dados entre sistemas."
+          - "5. Garantir que contratos de confidencialidade existem com parceiros que acedem a dados sensíveis."
+        exemplos_evidencias:
+          - "Política de classificação formalizada e assinada pela gestão"
+          - "Etiquetas de classificação em documentos físicos e digitais"
+          - "NDAs/contratos de confidencialidade com parceiros"
+        checks:
+          - descricao: "Existe uma política de classificação de informação documentada e aprovada."
+            obrigatorio: true
+          - descricao: "Os documentos sensíveis estão etiquetados com o nível de classificação."
+            obrigatorio: false
+          - descricao: "Existem regras de manuseamento definidas para cada nível de classificação."
+            obrigatorio: true
+          - descricao: "O fluxo de dados sensíveis entre sistemas está mapeado."
+            obrigatorio: false
+          - descricao: "Parceiros com acesso a dados sensíveis assinaram NDA ou cláusulas de confidencialidade."
+            obrigatorio: false
+      3:
+        descricao: "Política de classificação documentada com 3-4 categorias e procedimentos de manuseamento."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      4:
+        descricao: "Classificação implementada em sistemas — etiquetagem automática de documentos."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      5:
+        descricao: "Gestão de ciclo de vida completa — criação, uso, arquivo e destruição com controlo automático."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+
+  - codigo: ID.GV-01
+    dominio: ID
+    titulo: Política de segurança da informação
+    descricao_simples: >
+      A organização tem um documento escrito que define as regras de segurança
+      que todos os colaboradores devem seguir.
+    critico: true
+    nivel_minimo_base: 2
+    nivel_minimo_importante: 3
+    nivel_minimo_essencial: 4
+    ordem: 3
+    mapeamento:
+      iso27001: ["A.5.1"]
+      nist_csf: ["ID.GV-1"]
+      dl125: ["Art.21º(2)(a)"]
+    niveis:
+      1:
+        descricao: "Sem política escrita. Regras comunicadas verbalmente ou por email ocasional."
+        guia_implementacao:
+          - "1. Redigir uma política de segurança simples e clara (1-2 páginas)."
+          - "2. Incluir: uso aceitável de equipamentos, passwords, email, dispositivos móveis, redes."
+          - "3. Obter aprovação da gestão de topo."
+          - "4. Distribuir e obter confirmação de leitura de todos os colaboradores."
+          - "5. Rever anualmente ou quando existirem mudanças significativas."
+        exemplos_evidencias:
+          - "Documento de Política de Segurança da Informação assinado pela gestão"
+          - "Email de distribuição aos colaboradores com assinatura de recebimento"
+          - "Registo de formação onde a política foi apresentada"
+        checks:
+          - descricao: "Existe um documento escrito de política de segurança da informação."
+            obrigatorio: true
+          - descricao: "A política foi aprovada pela gestão de topo."
+            obrigatorio: true
+          - descricao: "A política foi distribuída a todos os colaboradores."
+            obrigatorio: true
+          - descricao: "A política inclui regras de uso de email e internet."
+            obrigatorio: false
+          - descricao: "A política inclui regras sobre passwords."
+            obrigatorio: false
+      2:
+        descricao: "Política básica escrita e aprovada, distribuída aos colaboradores."
+        guia_implementacao:
+          - "1. Expandir a política com capítulos específicos para cada domínio (acessos, incidentes, backups)."
+          - "2. Criar um processo formal de revisão anual com registo de alterações."
+          - "3. Obter confirmação escrita de leitura e compreensão de todos os colaboradores."
+          - "4. Criar versão simplificada para onboarding de novos colaboradores."
+          - "5. Alinhar a política com o registo de tratamento de dados (RGPD)."
+        exemplos_evidencias:
+          - "Política de segurança com histórico de versões e revisão anual registada"
+          - "Declarações de confirmação de leitura assinadas por todos os colaboradores"
+          - "Módulo de segurança no processo de onboarding"
+        checks:
+          - descricao: "A política tem histórico de versões e data de última revisão."
+            obrigatorio: true
+          - descricao: "Existe confirmação escrita de leitura de todos os colaboradores ativos."
+            obrigatorio: true
+          - descricao: "A política inclui capítulo sobre resposta a incidentes."
+            obrigatorio: false
+          - descricao: "Novos colaboradores recebem a política no processo de onboarding."
+            obrigatorio: false
+          - descricao: "A política está alinhada com o registo de tratamento de dados."
+            obrigatorio: false
+      3:
+        descricao: "Política completa, atualizada anualmente, com registo de confirmação de todos."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      4:
+        descricao: "Política integrada no onboarding, com testes de compreensão e métricas de conformidade."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      5:
+        descricao: "Política dinâmica, atualizada em tempo real com base em incidentes, normas e contexto de risco."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+
+  - codigo: ID.RA-01
+    dominio: ID
+    titulo: Identificação e avaliação de riscos de cibersegurança
+    descricao_simples: >
+      A organização identifica os principais riscos de segurança que podem afetar o negócio
+      e avalia a sua probabilidade e impacto.
+    critico: false
+    nivel_minimo_base: 2
+    nivel_minimo_importante: 3
+    nivel_minimo_essencial: 4
+    ordem: 4
+    mapeamento:
+      iso27001: ["A.6.1", "A.8.3"]
+      nist_csf: ["ID.RA-1", "ID.RA-5"]
+      dl125: ["Art.21º(2)(a)"]
+    niveis:
+      1:
+        descricao: "Sem avaliação de riscos formal. Riscos tratados reactivamente quando ocorrem."
+        guia_implementacao:
+          - "1. Realizar uma sessão de identificação de riscos com os responsáveis de cada área."
+          - "2. Para cada risco: descrever a ameaça, o ativo afetado, a probabilidade e o impacto."
+          - "3. Criar uma matriz de risco simples (probabilidade × impacto)."
+          - "4. Priorizar os 5-10 riscos mais significativos."
+          - "5. Definir medidas de mitigação para cada risco prioritário."
+        exemplos_evidencias:
+          - "Registo de riscos (folha de cálculo ou documento)"
+          - "Matriz de risco com classificação probabilidade × impacto"
+          - "Atas de reunião de avaliação de riscos"
+        checks:
+          - descricao: "Existe uma lista dos principais riscos de segurança identificados."
+            obrigatorio: true
+          - descricao: "Cada risco tem uma avaliação de impacto (alto/médio/baixo)."
+            obrigatorio: true
+          - descricao: "Existe pelo menos uma medida de mitigação definida para os riscos de alto impacto."
+            obrigatorio: true
+          - descricao: "A avaliação de riscos foi revisada nos últimos 12 meses."
+            obrigatorio: false
+          - descricao: "A avaliação de riscos foi apresentada à gestão de topo."
+            obrigatorio: false
+      2:
+        descricao: "Lista informal de principais riscos identificada pela gestão."
+        guia_implementacao:
+          - "1. Formalizar a avaliação de riscos com metodologia documentada (ex: FAIR, ISO 27005 simplificada)."
+          - "2. Incluir riscos de terceiros e da cadeia de abastecimento."
+          - "3. Criar um plano de tratamento de riscos com ações, responsáveis e prazos."
+          - "4. Rever a avaliação semestralmente ou após eventos significativos."
+          - "5. Reportar o estado dos riscos à administração."
+        exemplos_evidencias:
+          - "Registos de riscos com metodologia documentada"
+          - "Plano de tratamento de riscos com responsáveis e prazos"
+          - "Relatório semestral de revisão de riscos apresentado à direção"
+        checks:
+          - descricao: "A avaliação de riscos usa uma metodologia documentada e consistente."
+            obrigatorio: true
+          - descricao: "O registo de riscos inclui riscos de terceiros e fornecedores."
+            obrigatorio: false
+          - descricao: "Existe um plano de tratamento de riscos com responsáveis e prazos."
+            obrigatorio: true
+          - descricao: "A avaliação de riscos é revista pelo menos semestralmente."
+            obrigatorio: false
+          - descricao: "O estado dos riscos é reportado à gestão de topo em reunião periódica."
+            obrigatorio: false
+      3:
+        descricao: "Avaliação de riscos formal com matriz documentada, revista anualmente."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      4:
+        descricao: "Avaliação de riscos integrada em decisões de negócio e investimentos em TI."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      5:
+        descricao: "Gestão de riscos contínua com reavaliação automática baseada em dados de ameaças."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+
+  - codigo: ID.SC-01
+    dominio: ID
+    titulo: Gestão de segurança da cadeia de abastecimento
+    descricao_simples: >
+      A organização conhece os fornecedores e parceiros com acesso aos seus sistemas
+      e dados, e avalia os riscos que representam.
+    critico: false
+    nivel_minimo_base: 2
+    nivel_minimo_importante: 3
+    nivel_minimo_essencial: 4
+    ordem: 5
+    mapeamento:
+      iso27001: ["A.15.1", "A.15.2"]
+      nist_csf: ["ID.SC-1", "ID.SC-3"]
+      dl125: ["Art.21º(2)(d)"]
+    niveis:
+      1:
+        descricao: "Sem controlo de fornecedores. Acesso concedido sem avaliação de segurança."
+        guia_implementacao:
+          - "1. Listar todos os fornecedores com acesso a sistemas ou dados da organização."
+          - "2. Para cada fornecedor: identificar o tipo de acesso e os dados a que têm acesso."
+          - "3. Verificar que os contratos incluem cláusulas de proteção de dados (DPA se RGPD aplicável)."
+          - "4. Enviar questionário de segurança aos fornecedores críticos."
+          - "5. Documentar os resultados e riscos identificados."
+        exemplos_evidencias:
+          - "Lista de fornecedores com tipo de acesso e dados envolvidos"
+          - "Cópias de contratos com cláusulas de segurança/DPA"
+          - "Questionários de segurança respondidos por fornecedores"
+        checks:
+          - descricao: "Existe uma lista dos fornecedores com acesso a sistemas ou dados da organização."
+            obrigatorio: true
+          - descricao: "Os contratos com fornecedores críticos incluem cláusulas de segurança/confidencialidade."
+            obrigatorio: true
+          - descricao: "É sabido que tipo de dados cada fornecedor crítico pode aceder."
+            obrigatorio: true
+          - descricao: "Existe um processo para revogar o acesso quando um fornecedor termina a relação."
+            obrigatorio: false
+          - descricao: "Os fornecedores críticos foram informados das políticas de segurança da organização."
+            obrigatorio: false
+      2:
+        descricao: "Lista de fornecedores críticos identificada, contratos com cláusulas básicas."
+        guia_implementacao:
+          - "1. Classificar fornecedores por criticidade (críticos, importantes, regulares)."
+          - "2. Exigir questionários de segurança a fornecedores críticos."
+          - "3. Garantir que todos os Acordos de Processamento de Dados (DPA/Art.28 RGPD) estão assinados."
+          - "4. Definir requisitos mínimos de segurança contratuais para todos os fornecedores."
+          - "5. Rever a lista de fornecedores anualmente."
+        exemplos_evidencias:
+          - "Classificação de fornecedores por criticidade"
+          - "DPAs assinados com todos os processadores de dados"
+          - "Questionários de segurança de fornecedores críticos com avaliação de risco"
+        checks:
+          - descricao: "Os fornecedores estão classificados por criticidade."
+            obrigatorio: true
+          - descricao: "Todos os fornecedores que processam dados pessoais têm DPA assinado."
+            obrigatorio: true
+          - descricao: "Existe um processo de avaliação de segurança antes de contratar novos fornecedores críticos."
+            obrigatorio: false
+          - descricao: "A lista de fornecedores é revista anualmente."
+            obrigatorio: false
+          - descricao: "Os contratos incluem o direito de auditoria de segurança."
+            obrigatorio: false
+      3:
+        descricao: "Política de segurança de fornecedores documentada, avaliação anual."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      4:
+        descricao: "Auditorias de terceiros a fornecedores críticos, scorecard de segurança."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      5:
+        descricao: "Monitorização contínua de fornecedores, integração de threat intelligence."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+
+  # ── PROTEGER ───────────────────────────────────────────────────────────────
+  - codigo: PR.AC-01
+    dominio: PR
+    titulo: Gestão de identidades e controlo de acessos
+    descricao_simples: >
+      Apenas as pessoas certas têm acesso aos sistemas e dados certos,
+      com as permissões mínimas necessárias para o seu trabalho.
+    critico: true
+    nivel_minimo_base: 2
+    nivel_minimo_importante: 3
+    nivel_minimo_essencial: 4
+    ordem: 1
+    mapeamento:
+      iso27001: ["A.9.1", "A.9.2", "A.9.4"]
+      nist_csf: ["PR.AC-1", "PR.AC-4"]
+      dl125: ["Art.21º(2)(e)"]
+    niveis:
+      1:
+        descricao: "Contas partilhadas, sem controlo formal de acessos."
+        guia_implementacao:
+          - "1. Criar uma conta individual para cada colaborador — nunca partilhar contas."
+          - "2. Definir permissões baseadas na função (princípio do menor privilégio)."
+          - "3. Rever trimestralmente quem tem acesso a quê."
+          - "4. Revogar imediatamente o acesso quando um colaborador sai."
+          - "5. Implementar processo formal de criação/modificação/revogação de acessos."
+        exemplos_evidencias:
+          - "Lista de utilizadores de sistemas com permissões atribuídas"
+          - "Registo de revisão periódica de acessos"
+          - "Procedimento documentado de onboarding/offboarding (criação/revogação de contas)"
+        checks:
+          - descricao: "Cada colaborador tem a sua própria conta (sem contas partilhadas)."
+            obrigatorio: true
+          - descricao: "As permissões são atribuídas com base na função do colaborador."
+            obrigatorio: true
+          - descricao: "Existe um processo para revogar o acesso quando um colaborador sai."
+            obrigatorio: true
+          - descricao: "A lista de utilizadores com acesso a sistemas críticos foi revista nos últimos 6 meses."
+            obrigatorio: false
+          - descricao: "Não existem contas de utilizadores que já não trabalham na organização."
+            obrigatorio: false
+      2:
+        descricao: "Contas individuais, acessos atribuídos ad hoc sem processo formal."
+        guia_implementacao:
+          - "1. Formalizar o processo de aprovação para concessão e revogação de acessos."
+          - "2. Implementar revisão trimestral de todos os acessos activos."
+          - "3. Documentar os papéis de acesso (quem tem acesso a quê)."
+          - "4. Segregar funções para sistemas financeiros e críticos."
+          - "5. Criar um registo de todos os acessos privilegiados."
+        exemplos_evidencias:
+          - "Processo formal de aprovação de novos acessos com formulário/fluxo documentado"
+          - "Relatório trimestral de revisão de acessos com evidência de execução"
+          - "Matriz de papéis e acessos documentada"
+        checks:
+          - descricao: "Existe um processo formal (com aprovação) para conceder novos acessos."
+            obrigatorio: true
+          - descricao: "Os acessos são revistos formalmente pelo menos trimestralmente."
+            obrigatorio: true
+          - descricao: "Existe uma lista de todos os utilizadores com acessos privilegiados."
+            obrigatorio: true
+          - descricao: "As funções de administrador e utilizador regular são segregadas."
+            obrigatorio: false
+          - descricao: "Existe uma matriz documentada de papéis e permissões."
+            obrigatorio: false
+      3:
+        descricao: "Processo formal de gestão de acessos, revisão anual, permissões por função."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      4:
+        descricao: "IAM implementado, revisão automática, acessos just-in-time para privilégios elevados."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      5:
+        descricao: "Zero trust, autenticação contínua, microsegmentação, acesso adaptativo ao risco."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+
+  - codigo: PR.AC-02
+    dominio: PR
+    titulo: Autenticação de múltiplos fatores (MFA)
+    descricao_simples: >
+      Para aceder a sistemas críticos, para além da password é necessária uma segunda
+      verificação (ex: código no telemóvel).
+    critico: true
+    nivel_minimo_base: 2
+    nivel_minimo_importante: 3
+    nivel_minimo_essencial: 4
+    ordem: 2
+    mapeamento:
+      iso27001: ["A.9.4"]
+      nist_csf: ["PR.AC-7"]
+      dl125: ["Art.21º(2)(j)"]
+    niveis:
+      1:
+        descricao: "Sem MFA em nenhum sistema."
+        guia_implementacao:
+          - "1. Identificar os sistemas críticos e os acessos remotos."
+          - "2. Ativar MFA em email, VPN, sistemas de gestão e acesso remoto."
+          - "3. Obrigar MFA para administradores de sistemas."
+          - "4. Escolher um método: app autenticadora (Google Authenticator, Authy), SMS, hardware token."
+          - "5. Treinar os colaboradores na utilização do MFA."
+        exemplos_evidencias:
+          - "Screenshot de configuração de MFA em sistemas críticos"
+          - "Política de acesso remoto obrigando MFA"
+          - "Registo de utilizadores com MFA ativado"
+        checks:
+          - descricao: "MFA está ativado no email corporativo dos administradores."
+            obrigatorio: true
+          - descricao: "MFA está ativado no acesso remoto (VPN ou Remote Desktop) se usado."
+            obrigatorio: true
+          - descricao: "Os administradores de sistemas usam MFA para aceder a painéis de gestão."
+            obrigatorio: true
+          - descricao: "Existe documentação de como ativar e usar o MFA para os colaboradores."
+            obrigatorio: false
+          - descricao: "Existe um processo de recuperação de acesso quando o MFA falha."
+            obrigatorio: false
+      2:
+        descricao: "MFA ativado em email e acesso remoto para administradores."
+        guia_implementacao:
+          - "1. Alargar o MFA a todos os utilizadores em sistemas de email e acesso remoto."
+          - "2. Eliminar o SMS como único fator (vulnerável a SIM swapping) — migrar para app autenticadora."
+          - "3. Documentar o processo de recuperação de MFA para utilizadores bloqueados."
+          - "4. Inventariar todos os sistemas que ainda não têm MFA ativado."
+          - "5. Definir prazo para MFA obrigatório para todos os colaboradores."
+        exemplos_evidencias:
+          - "Relatório de cobertura MFA (% de utilizadores com MFA ativo)"
+          - "Política de password e MFA actualizada"
+          - "Processo documentado de recuperação de MFA"
+        checks:
+          - descricao: "MFA está ativado para todos os utilizadores no email corporativo."
+            obrigatorio: true
+          - descricao: "MFA usa app autenticadora (não apenas SMS)."
+            obrigatorio: false
+          - descricao: "Existe um relatório de cobertura do MFA (quem tem, quem não tem)."
+            obrigatorio: true
+          - descricao: "O processo de recuperação de MFA está documentado e é seguro."
+            obrigatorio: false
+          - descricao: "Existe um prazo definido para MFA obrigatório em todos os sistemas."
+            obrigatorio: false
+      3:
+        descricao: "MFA obrigatório para todos os utilizadores em sistemas críticos e acesso remoto."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      4:
+        descricao: "MFA adaptativo (exige MFA adicional em contextos de risco elevado)."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      5:
+        descricao: "Passwordless authentication, biometria, hardware tokens para todos os acessos privilegiados."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+
+  - codigo: PR.DS-01
+    dominio: PR
+    titulo: Proteção de dados em repouso e em trânsito
+    descricao_simples: >
+      Os dados sensíveis estão protegidos por encriptação, tanto quando estão guardados
+      como quando são transmitidos pela internet.
+    critico: false
+    nivel_minimo_base: 2
+    nivel_minimo_importante: 3
+    nivel_minimo_essencial: 4
+    ordem: 3
+    mapeamento:
+      iso27001: ["A.10.1", "A.13.2"]
+      nist_csf: ["PR.DS-1", "PR.DS-2"]
+      dl125: ["Art.21º(2)(h)"]
+    niveis:
+      1:
+        descricao: "Sem encriptação em nenhum sistema. Dados transmitidos em claro."
+        guia_implementacao:
+          - "1. Garantir que o site e sistemas web usam HTTPS (certificado SSL/TLS)."
+          - "2. Cifrar portáteis e pen drives com dados sensíveis (BitLocker, FileVault)."
+          - "3. Usar VPN para acessos remotos a sistemas internos."
+          - "4. Garantir que backups estão encriptados."
+          - "5. Verificar que email com dados sensíveis usa canal seguro (TLS)."
+        exemplos_evidencias:
+          - "Screenshot de certificado SSL/TLS ativo no site"
+          - "Política de encriptação de dispositivos portáteis"
+          - "Screenshot de configuração de BitLocker ou FileVault nos portáteis"
+        checks:
+          - descricao: "O site e sistemas web usam HTTPS com certificado válido."
+            obrigatorio: true
+          - descricao: "Os portáteis da organização têm encriptação de disco ativa (ex: BitLocker, FileVault)."
+            obrigatorio: true
+          - descricao: "Pen drives e discos externos com dados sensíveis são encriptados."
+            obrigatorio: false
+          - descricao: "Os backups são guardados de forma encriptada."
+            obrigatorio: false
+          - descricao: "As comunicações de acesso remoto (VPN) são encriptadas."
+            obrigatorio: false
+      2:
+        descricao: "HTTPS no site e email TLS. Sem encriptação de dispositivos."
+        guia_implementacao:
+          - "1. Implementar política de encriptação de dispositivos portáteis em todos os portáteis."
+          - "2. Verificar que backups em disco externo ou cloud estão encriptados."
+          - "3. Criar inventário de sistemas sem encriptação ativa."
+          - "4. Definir prazo para implementação de encriptação em todos os sistemas críticos."
+          - "5. Testar regularmente a validade dos certificados TLS."
+        exemplos_evidencias:
+          - "Inventário de laptops com estado da encriptação de disco"
+          - "Configuração de backups encriptados com evidência"
+          - "Calendário de renovação de certificados TLS"
+        checks:
+          - descricao: "Todos os portáteis têm encriptação de disco ativa."
+            obrigatorio: true
+          - descricao: "Os backups estão encriptados (em disco externo e/ou cloud)."
+            obrigatorio: true
+          - descricao: "Existe uma política formal de encriptação aprovada."
+            obrigatorio: false
+          - descricao: "Os certificados TLS têm monitorização de expiração configurada."
+            obrigatorio: false
+          - descricao: "Existe um inventário de sistemas com estado de encriptação documentado."
+            obrigatorio: false
+      3:
+        descricao: "HTTPS + encriptação de portáteis + backups encriptados."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      4:
+        descricao: "Encriptação end-to-end em comunicações, gestão centralizada de chaves."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      5:
+        descricao: "Encriptação por defeito em todos os dados, HSM, rotação automática de chaves."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+
+  - codigo: PR.IP-01
+    dominio: PR
+    titulo: Gestão de patches e vulnerabilidades
+    descricao_simples: >
+      A organização mantém os sistemas e software atualizados para corrigir
+      vulnerabilidades de segurança conhecidas.
+    critico: true
+    nivel_minimo_base: 2
+    nivel_minimo_importante: 3
+    nivel_minimo_essencial: 4
+    ordem: 4
+    mapeamento:
+      iso27001: ["A.12.6"]
+      nist_csf: ["PR.IP-12"]
+      dl125: ["Art.21º(2)(e)"]
+    niveis:
+      1:
+        descricao: "Sem processo de patches. Sistemas desatualizados por meses ou anos."
+        guia_implementacao:
+          - "1. Ativar atualizações automáticas em todos os sistemas operativos."
+          - "2. Definir uma janela de manutenção mensal para aplicar patches manuais."
+          - "3. Verificar mensalmente se existem atualizações pendentes nos sistemas críticos."
+          - "4. Manter registo das versões instaladas e data da última atualização."
+          - "5. Incluir software de terceiros (Office, browsers, etc.) no processo de patches."
+        exemplos_evidencias:
+          - "Screenshot de configuração de atualizações automáticas nos sistemas"
+          - "Registo mensal de verificação de patches"
+          - "Lista de sistemas com versão e data da última atualização"
+        checks:
+          - descricao: "As atualizações automáticas estão ativas nos sistemas operativos dos equipamentos."
+            obrigatorio: true
+          - descricao: "Os sistemas críticos foram atualizados nos últimos 30 dias."
+            obrigatorio: true
+          - descricao: "Existe alguém responsável por verificar e aplicar atualizações de segurança."
+            obrigatorio: true
+          - descricao: "O antivírus/endpoint protection está atualizado em todos os equipamentos."
+            obrigatorio: false
+          - descricao: "Existe um registo das últimas atualizações aplicadas nos sistemas críticos."
+            obrigatorio: false
+      2:
+        descricao: "Atualizações automáticas ativas. Patches críticos aplicados quando lembrado."
+        guia_implementacao:
+          - "1. Formalizar o processo de patches com SLA por criticidade (ex: críticos em 7 dias, altos em 30 dias)."
+          - "2. Implementar uma ferramenta de scanning de vulnerabilidades."
+          - "3. Incluir aplicações de terceiros e plugins no processo de gestão de patches."
+          - "4. Criar um registo de vulnerabilidades identificadas e estado de remediação."
+          - "5. Testar patches em ambiente de teste antes de aplicar em produção."
+        exemplos_evidencias:
+          - "Política de gestão de patches com SLA por criticidade documentada"
+          - "Relatório de scanning de vulnerabilidades"
+          - "Registo de vulnerabilidades com estado de remediação"
+        checks:
+          - descricao: "Existe uma política de gestão de patches com SLAs definidos."
+            obrigatorio: true
+          - descricao: "É realizado scanning de vulnerabilidades nos sistemas críticos."
+            obrigatorio: false
+          - descricao: "Existe um registo de vulnerabilidades identificadas e respetivo estado."
+            obrigatorio: true
+          - descricao: "Os patches são testados antes de serem aplicados em produção."
+            obrigatorio: false
+          - descricao: "Aplicações de terceiros estão incluídas no processo de patches."
+            obrigatorio: false
+      3:
+        descricao: "Processo formal com janela de manutenção mensal e registo de conformidade."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      4:
+        descricao: "Gestão centralizada de patches com relatórios de conformidade automáticos."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      5:
+        descricao: "Patch management automatizado com SLA (ex.: patches críticos em 72h), integrado com CVE feeds."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+
+  - codigo: PR.AT-01
+    dominio: PR
+    titulo: Formação e consciencialização em cibersegurança
+    descricao_simples: >
+      Todos os colaboradores recebem formação regular sobre cibersegurança,
+      incluindo como reconhecer ameaças como phishing.
+    critico: true
+    nivel_minimo_base: 2
+    nivel_minimo_importante: 3
+    nivel_minimo_essencial: 4
+    ordem: 5
+    mapeamento:
+      iso27001: ["A.7.2"]
+      nist_csf: ["PR.AT-1", "PR.AT-2"]
+      dl125: ["Art.21º(2)(g)"]
+    niveis:
+      1:
+        descricao: "Sem formação formal. Colaboradores não sabem reconhecer ameaças básicas."
+        guia_implementacao:
+          - "1. Realizar formação anual de consciencialização para todos os colaboradores."
+          - "2. Incluir: phishing, passwords seguras, uso de dispositivos pessoais, relatório de incidentes."
+          - "3. Incluir módulo de segurança no onboarding de novos colaboradores."
+          - "4. Realizar simulações de phishing periódicas."
+          - "5. Manter registo de participação nas formações."
+        exemplos_evidencias:
+          - "Registo de presenças em formação de cibersegurança"
+          - "Material de formação utilizado (apresentação, vídeo)"
+          - "Resultados de simulação de phishing com evidência de formação adicional"
+        checks:
+          - descricao: "Todos os colaboradores receberam pelo menos uma formação de cibersegurança nos últimos 12 meses."
+            obrigatorio: true
+          - descricao: "A formação incluiu como reconhecer emails de phishing."
+            obrigatorio: true
+          - descricao: "A formação incluiu regras de passwords seguras."
+            obrigatorio: true
+          - descricao: "Novos colaboradores recebem formação de segurança no onboarding."
+            obrigatorio: false
+          - descricao: "Existe registo (presença, certificado) das formações realizadas."
+            obrigatorio: false
+      2:
+        descricao: "Formação anual pontual sobre tópicos básicos."
+        guia_implementacao:
+          - "1. Estruturar um programa formal de consciencialização com calendário anual."
+          - "2. Realizar pelo menos uma simulação de phishing por ano e medir resultados."
+          - "3. Criar conteúdos diferenciados por função (admins, gestão, utilizadores gerais)."
+          - "4. Estabelecer métricas de eficácia (ex: taxa de cliques em phishing simulado)."
+          - "5. Registar conclusão de formação como obrigatório para toda a organização."
+        exemplos_evidencias:
+          - "Programa anual de formação em cibersegurança com calendário"
+          - "Resultados de campanha de phishing simulado com taxa de cliques"
+          - "Relatório de conclusão da formação por colaborador"
+        checks:
+          - descricao: "Existe um programa formal de consciencialização com calendário anual."
+            obrigatorio: true
+          - descricao: "É realizada pelo menos uma simulação de phishing por ano."
+            obrigatorio: true
+          - descricao: "Existem métricas de eficácia medidas periodicamente."
+            obrigatorio: false
+          - descricao: "O conteúdo de formação é diferenciado por função."
+            obrigatorio: false
+          - descricao: "A conclusão da formação é registada e reportada à gestão."
+            obrigatorio: false
+      3:
+        descricao: "Programa formal de consciencialização com simulações e métricas de eficácia."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      4:
+        descricao: "Formação contínua adaptativa, campanhas segmentadas por função."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      5:
+        descricao: "Cultura de segurança medida e gerida, gamificação, capacitação de security champions."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+
+  # ── DETETAR ────────────────────────────────────────────────────────────────
+  - codigo: DE.CM-01
+    dominio: DE
+    titulo: Monitorização contínua de segurança
+    descricao_simples: >
+      A organização monitoriza os seus sistemas para detetar atividades suspeitas
+      e possíveis incidentes de segurança.
+    critico: false
+    nivel_minimo_base: 2
+    nivel_minimo_importante: 3
+    nivel_minimo_essencial: 4
+    ordem: 1
+    mapeamento:
+      iso27001: ["A.12.4"]
+      nist_csf: ["DE.CM-1", "DE.CM-7"]
+      dl125: ["Art.21º(2)(b)"]
+    niveis:
+      1:
+        descricao: "Sem monitorização. Incidentes só descobertos por reporte manual."
+        guia_implementacao:
+          - "1. Ativar logs de acesso nos sistemas críticos (servidor, email, VPN)."
+          - "2. Instalar e configurar antivírus/EDR em todos os equipamentos."
+          - "3. Configurar alertas para tentativas de login falhadas repetidas."
+          - "4. Verificar semanalmente se existem alertas de segurança por tratar."
+          - "5. Manter os logs por pelo menos 12 meses."
+        exemplos_evidencias:
+          - "Screenshot de dashboard de antivírus/EDR a funcionar"
+          - "Configuração de alertas de login falhado"
+          - "Registo de revisão semanal de alertas de segurança"
+        checks:
+          - descricao: "Antivírus/endpoint protection está instalado e ativo em todos os equipamentos."
+            obrigatorio: true
+          - descricao: "Os logs de acesso estão ativos nos sistemas críticos."
+            obrigatorio: true
+          - descricao: "Existe alguém responsável por verificar alertas de segurança regularmente."
+            obrigatorio: true
+          - descricao: "Os logs são mantidos por pelo menos 90 dias."
+            obrigatorio: false
+          - descricao: "Existem alertas configurados para eventos críticos (ex: login falhado repetido)."
+            obrigatorio: false
+      2:
+        descricao: "Antivírus ativo, revisão manual ocasional de logs."
+        guia_implementacao:
+          - "1. Formalizar o processo de revisão de logs com frequência e responsável definidos."
+          - "2. Centralizar os logs de diferentes sistemas num único local."
+          - "3. Definir e documentar os eventos que requerem alertas e follow-up."
+          - "4. Garantir retenção de logs por pelo menos 12 meses (requisito NIS2)."
+          - "5. Criar procedimento de escalada quando um alerta crítico é identificado."
+        exemplos_evidencias:
+          - "Procedimento documentado de revisão de logs com frequência e responsável"
+          - "Configuração de retenção de logs ≥ 12 meses"
+          - "Registo de alertas tratados nos últimos 3 meses"
+        checks:
+          - descricao: "Os logs são revistos formalmente com uma frequência definida."
+            obrigatorio: true
+          - descricao: "Os logs são retidos por pelo menos 12 meses."
+            obrigatorio: true
+          - descricao: "Existe um repositório centralizado de logs de diferentes sistemas."
+            obrigatorio: false
+          - descricao: "Existe um procedimento de escalada para alertas críticos."
+            obrigatorio: false
+          - descricao: "Existe um registo dos alertas tratados."
+            obrigatorio: false
+      3:
+        descricao: "Monitorização formal com revisão regular, alertas configurados para eventos críticos."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      4:
+        descricao: "SIEM básico, correlação de eventos, alertas automáticos para anomalias."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      5:
+        descricao: "SOC com monitorização 24/7, threat hunting, UEBA."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+
+  - codigo: DE.CM-02
+    dominio: DE
+    titulo: Deteção de intrusões e anomalias de rede
+    descricao_simples: >
+      A organização tem mecanismos para detetar acessos não autorizados
+      à sua rede e sistemas.
+    critico: false
+    nivel_minimo_base: 2
+    nivel_minimo_importante: 3
+    nivel_minimo_essencial: 4
+    ordem: 2
+    mapeamento:
+      iso27001: ["A.13.1"]
+      nist_csf: ["DE.CM-1", "DE.CM-6"]
+      dl125: ["Art.21º(2)(b)"]
+    niveis:
+      1:
+        descricao: "Sem firewall ou deteção de intrusões."
+        guia_implementacao:
+          - "1. Verificar os logs do router/firewall periodicamente."
+          - "2. Configurar a firewall para bloquear tráfego não autorizado."
+          - "3. Segmentar a rede WiFi de convidados da rede corporativa."
+          - "4. Revisar mensalmente os dispositivos ligados à rede."
+          - "5. Configurar alertas para ligações de localizações ou horários incomuns."
+        exemplos_evidencias:
+          - "Screenshot de configuração de firewall"
+          - "Registo de revisão mensal de dispositivos na rede"
+          - "Configuração de rede WiFi separada para convidados"
+        checks:
+          - descricao: "Existe uma firewall ativa entre a rede interna e a internet."
+            obrigatorio: true
+          - descricao: "A rede WiFi de convidados é separada da rede interna corporativa."
+            obrigatorio: true
+          - descricao: "Os logs da firewall/router são verificados periodicamente."
+            obrigatorio: false
+          - descricao: "A lista de dispositivos ligados à rede é revista mensalmente."
+            obrigatorio: false
+          - descricao: "Existe alguém responsável por monitorizar a segurança da rede."
+            obrigatorio: true
+      2:
+        descricao: "Firewall básica, rede WiFi de convidados separada."
+        guia_implementacao:
+          - "1. Implementar regras de firewall com política de deny-by-default."
+          - "2. Realizar scanning periódico de portas abertas e serviços expostos."
+          - "3. Segmentar a rede interna por função (servidores, workstations, IoT)."
+          - "4. Monitorizar tráfego de saída para detetar exfiltração de dados."
+          - "5. Configurar alertas para ligações a domínios maliciosos conhecidos."
+        exemplos_evidencias:
+          - "Ruleset documentado da firewall com política deny-by-default"
+          - "Relatório de port scanning com portas abertas justificadas"
+          - "Diagrama de segmentação de rede"
+        checks:
+          - descricao: "A firewall tem uma política deny-by-default implementada."
+            obrigatorio: true
+          - descricao: "É realizado scanning periódico de portas e serviços expostos."
+            obrigatorio: false
+          - descricao: "A rede interna está segmentada por função."
+            obrigatorio: false
+          - descricao: "Existe monitorização de tráfego de saída incomum."
+            obrigatorio: false
+          - descricao: "Os alertas de ligação a domínios maliciosos estão configurados."
+            obrigatorio: true
+      3:
+        descricao: "IDS/IPS ativo, revisão regular de logs de rede, segmentação."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      4:
+        descricao: "NDR com análise comportamental, detecção de lateral movement."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      5:
+        descricao: "Zero trust network, microsegmentação, NDR com AI."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+
+  - codigo: DE.AE-01
+    dominio: DE
+    titulo: Análise e correlação de eventos de segurança
+    descricao_simples: >
+      Quando detetados eventos suspeitos, a organização é capaz de avaliar
+      se constituem um incidente de segurança real.
+    critico: false
+    nivel_minimo_base: 1
+    nivel_minimo_importante: 2
+    nivel_minimo_essencial: 3
+    ordem: 3
+    mapeamento:
+      iso27001: ["A.16.1"]
+      nist_csf: ["DE.AE-2", "DE.AE-3"]
+      dl125: ["Art.21º(2)(b)"]
+    niveis:
+      1:
+        descricao: "Sem análise de eventos. Alertas ignorados ou não existem."
+        guia_implementacao:
+          - "1. Definir critérios claros do que constitui um incidente (vs. falso positivo)."
+          - "2. Criar um processo de triagem — quem decide se é incidente, e como."
+          - "3. Documentar os eventos de segurança mesmo que não resultem em incidente."
+          - "4. Rever os eventos do mês para identificar tendências ou padrões."
+          - "5. Atualizar os critérios de deteção com base nos eventos observados."
+        exemplos_evidencias:
+          - "Critérios documentados de classificação de eventos de segurança"
+          - "Registo de eventos analisados e decisões tomadas"
+          - "Procedimento de triagem de alertas"
+        checks:
+          - descricao: "Existe uma definição do que a organização considera um incidente de segurança."
+            obrigatorio: true
+          - descricao: "Existe alguém responsável por avaliar alertas de segurança e determinar se são incidentes."
+            obrigatorio: true
+          - descricao: "Os eventos de segurança são registados mesmo que não resultem em incidente."
+            obrigatorio: false
+          - descricao: "Existe um processo de escalada quando um evento suspeito é identificado."
+            obrigatorio: false
+          - descricao: "Os eventos dos últimos meses foram revistos para identificar padrões."
+            obrigatorio: false
+      2:
+        descricao: "Análise informal de alertas pelo responsável de TI quando disponível."
+        guia_implementacao:
+          - "1. Formalizar o processo de triagem e análise de alertas."
+          - "2. Criar playbooks de análise para os tipos de alerta mais comuns."
+          - "3. Definir SLA de análise por criticidade do alerta."
+          - "4. Implementar um registo centralizado de eventos analisados."
+          - "5. Realizar revisão mensal de todos os alertas tratados."
+        exemplos_evidencias:
+          - "Playbooks de análise de alertas documentados"
+          - "Registo centralizado de eventos com classificação e decisão"
+          - "Métricas mensais de alertas tratados por criticidade"
+        checks:
+          - descricao: "Existem playbooks documentados para análise dos tipos de alerta mais comuns."
+            obrigatorio: true
+          - descricao: "Existe um SLA definido para análise de alertas por criticidade."
+            obrigatorio: false
+          - descricao: "Todos os alertas são registados num log centralizado."
+            obrigatorio: true
+          - descricao: "São produzidas métricas mensais de alertas tratados."
+            obrigatorio: false
+          - descricao: "Os playbooks são revistos e actualizados regularmente."
+            obrigatorio: false
+      3:
+        descricao: "Processo de triagem documentado, registo de todos os eventos analisados."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      4:
+        descricao: "Correlação de eventos com contexto de ameaças, playbooks de resposta."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      5:
+        descricao: "SOAR com enriquecimento automático de alertas e resposta automática a ameaças comuns."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+
+  # ── RESPONDER ──────────────────────────────────────────────────────────────
+  - codigo: RS.RP-01
+    dominio: RS
+    titulo: Plano de resposta a incidentes de segurança
+    descricao_simples: >
+      A organização tem um plano documentado sobre o que fazer quando ocorre
+      um incidente de segurança.
+    critico: true
+    nivel_minimo_base: 2
+    nivel_minimo_importante: 3
+    nivel_minimo_essencial: 4
+    ordem: 1
+    mapeamento:
+      iso27001: ["A.16.1"]
+      nist_csf: ["RS.RP-1"]
+      dl125: ["Art.21º(2)(c)", "Art.23º"]
+    niveis:
+      1:
+        descricao: "Sem plano. Resposta ad hoc, caótica."
+        guia_implementacao:
+          - "1. Criar um plano simples de resposta a incidentes (1-2 páginas)."
+          - "2. Incluir: tipos de incidentes, quem contactar, passos imediatos, comunicação."
+          - "3. Definir papéis e responsabilidades (quem faz o quê)."
+          - "4. Incluir procedimento de notificação às autoridades (CNCS/CNPD se aplicável)."
+          - "5. Testar o plano com um exercício de mesa (tabletop exercise) anual."
+        exemplos_evidencias:
+          - "Plano de Resposta a Incidentes documentado e aprovado"
+          - "Lista de contactos de emergência (equipa interna + externos)"
+          - "Registo de exercício de teste do plano"
+        checks:
+          - descricao: "Existe um documento escrito de plano de resposta a incidentes."
+            obrigatorio: true
+          - descricao: "O plano inclui uma lista de contactos de emergência (internos e fornecedores)."
+            obrigatorio: true
+          - descricao: "O plano inclui os passos imediatos a tomar em caso de ransomware ou violação de dados."
+            obrigatorio: true
+          - descricao: "O plano foi comunicado e testado com pelo menos um exercício."
+            obrigatorio: false
+          - descricao: "O plano inclui o procedimento de notificação ao CNCS em caso de incidente significativo."
+            obrigatorio: false
+      2:
+        descricao: "Plano básico com contactos e passos principais."
+        guia_implementacao:
+          - "1. Expandir o plano com playbooks por tipo de incidente (ransomware, phishing, acesso indevido)."
+          - "2. Realizar exercício de mesa (tabletop exercise) anual para testar o plano."
+          - "3. Integrar o processo de notificação ao CNCS e CNPD nos procedimentos."
+          - "4. Definir critérios claros de classificação de incidentes (significativo/não significativo)."
+          - "5. Nomear um coordenador de incidentes e um suplente."
+        exemplos_evidencias:
+          - "Plano de resposta a incidentes com playbooks por tipo de incidente"
+          - "Relatório do último tabletop exercise com lições aprendidas"
+          - "Procedimento documentado de notificação ao CNCS"
+        checks:
+          - descricao: "Existem playbooks específicos para pelo menos 3 tipos de incidente."
+            obrigatorio: true
+          - descricao: "Foi realizado pelo menos um exercício de teste do plano nos últimos 12 meses."
+            obrigatorio: true
+          - descricao: "Existe um coordenador de incidentes nomeado com suplente."
+            obrigatorio: false
+          - descricao: "O plano inclui critérios de classificação de incidentes (significativo/não significativo)."
+            obrigatorio: false
+          - descricao: "O procedimento de notificação ao CNCS está documentado com prazos."
+            obrigatorio: false
+      3:
+        descricao: "Plano completo com playbooks por tipo de incidente, testado anualmente."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      4:
+        descricao: "Plano integrado com deteção automática, times de resposta treinados."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      5:
+        descricao: "Sistema SOAR, exercícios trimestrais incluindo red team, integrado com threat intel."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+
+  - codigo: RS.CO-01
+    dominio: RS
+    titulo: Comunicação e notificação de incidentes
+    descricao_simples: >
+      A organização sabe a quem deve comunicar incidentes de segurança,
+      incluindo autoridades reguladoras quando obrigado por lei.
+    critico: false
+    nivel_minimo_base: 1
+    nivel_minimo_importante: 3
+    nivel_minimo_essencial: 4
+    ordem: 2
+    mapeamento:
+      iso27001: ["A.16.1"]
+      nist_csf: ["RS.CO-2", "RS.CO-3"]
+      dl125: ["Art.23º"]
+    niveis:
+      1:
+        descricao: "Sem processo de comunicação. Incidentes não são reportados."
+        guia_implementacao:
+          - "1. Identificar as entidades a notificar conforme o tipo de incidente (CNCS, CNPD, clientes)."
+          - "2. Verificar os prazos legais de notificação (72h para violações de dados pessoais — RGPD)."
+          - "3. Criar modelos de comunicação para os cenários mais prováveis."
+          - "4. Treinar os colaboradores sobre como reportar internamente um incidente."
+          - "5. Manter um registo de todos os incidentes comunicados."
+        exemplos_evidencias:
+          - "Procedimento de notificação de incidentes com prazos legais"
+          - "Templates de comunicação para incidentes (clientes, CNPD, CNCS)"
+          - "Registo de incidentes comunicados"
+        checks:
+          - descricao: "Existe um procedimento documentado sobre quando e como notificar o CNCS em caso de incidente."
+            obrigatorio: true
+          - descricao: "Os colaboradores sabem a quem reportar internamente um incidente de segurança."
+            obrigatorio: true
+          - descricao: "É conhecido o prazo legal de notificação ao CNPD em caso de violação de dados pessoais (72h)."
+            obrigatorio: false
+          - descricao: "Existem templates de comunicação preparados para os cenários de incidente mais prováveis."
+            obrigatorio: false
+          - descricao: "Existe um registo de incidentes comunicados a entidades externas."
+            obrigatorio: false
+      2:
+        descricao: "Conhecimento dos prazos legais, comunicação ad hoc."
+        guia_implementacao:
+          - "1. Criar e testar os templates de comunicação com os principais stakeholders."
+          - "2. Documentar o processo de decisão sobre quem notificar e quando."
+          - "3. Garantir que os contactos do CNCS e CNPD estão actualizados e acessíveis."
+          - "4. Criar um registo formal de incidentes comunicados com resultado."
+          - "5. Incluir comunicação a clientes afectados nos procedimentos."
+        exemplos_evidencias:
+          - "Templates de comunicação testados e aprovados para CNCS, CNPD e clientes"
+          - "Contactos actualizados do CNCS e CNPD disponíveis à equipa de resposta"
+          - "Registo de incidentes com quem foi notificado e quando"
+        checks:
+          - descricao: "Os templates de comunicação foram testados e aprovados."
+            obrigatorio: true
+          - descricao: "Os contactos das autoridades (CNCS, CNPD) estão actualizados."
+            obrigatorio: true
+          - descricao: "Existe um processo documentado para comunicação a clientes afectados."
+            obrigatorio: false
+          - descricao: "O registo de incidentes inclui quem foi notificado e em que prazo."
+            obrigatorio: false
+          - descricao: "O processo de notificação foi testado num exercício ou simulação."
+            obrigatorio: false
+      3:
+        descricao: "Procedimento formal com templates, registo de incidentes notificados."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      4:
+        descricao: "Comunicação integrada no plano de IR, stakeholders mapeados por tipo."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      5:
+        descricao: "Plataforma de gestão de incidentes com workflow de notificação automático."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+
+  - codigo: RS.MI-01
+    dominio: RS
+    titulo: Contenção e mitigação de incidentes
+    descricao_simples: >
+      Quando um incidente de segurança ocorre, a organização é capaz
+      de o conter e reduzir o seu impacto rapidamente.
+    critico: false
+    nivel_minimo_base: 2
+    nivel_minimo_importante: 3
+    nivel_minimo_essencial: 4
+    ordem: 3
+    mapeamento:
+      iso27001: ["A.16.1"]
+      nist_csf: ["RS.MI-1", "RS.MI-2"]
+      dl125: ["Art.21º(2)(c)"]
+    niveis:
+      1:
+        descricao: "Sem playbooks. Resposta ad hoc durante incidentes."
+        guia_implementacao:
+          - "1. Definir playbooks de contenção para os cenários mais prováveis (ransomware, phishing, acesso não autorizado)."
+          - "2. Treinar a equipa nos procedimentos de isolamento de sistemas afetados."
+          - "3. Garantir acesso a backups offline para recuperação rápida."
+          - "4. Definir critérios claros para isolar vs. manter sistemas operacionais durante incidente."
+          - "5. Rever e melhorar após cada incidente real ou exercício."
+        exemplos_evidencias:
+          - "Playbooks de contenção documentados"
+          - "Registo de ações tomadas durante incidentes anteriores"
+          - "Verificação de acesso a backups offline"
+        checks:
+          - descricao: "Existe um procedimento para isolar um equipamento infetado da rede rapidamente."
+            obrigatorio: true
+          - descricao: "Existe um checklist de ações imediatas para o cenário de ransomware."
+            obrigatorio: true
+          - descricao: "A equipa responsável sabe como acionar os procedimentos de contenção."
+            obrigatorio: true
+          - descricao: "Os backups offline foram testados nos últimos 90 dias."
+            obrigatorio: false
+          - descricao: "Existe um processo de análise pós-incidente (lessons learned)."
+            obrigatorio: false
+      2:
+        descricao: "Checklist básica de contenção para os principais cenários."
+        guia_implementacao:
+          - "1. Formalizar os playbooks com passos detalhados, responsáveis e ferramentas."
+          - "2. Realizar exercícios práticos de contenção (ex: isolar um equipamento em ambiente controlado)."
+          - "3. Documentar lições aprendidas de cada incidente ou exercício."
+          - "4. Integrar os playbooks com as ferramentas de endpoint (EDR) e rede."
+          - "5. Definir critérios de escalonamento para envolver fornecedores ou autoridades."
+        exemplos_evidencias:
+          - "Playbooks detalhados com responsáveis, ferramentas e passos de verificação"
+          - "Relatório de exercício de contenção com lições aprendidas"
+          - "Critérios de escalada documentados"
+        checks:
+          - descricao: "Os playbooks de contenção incluem responsáveis, ferramentas e verificações."
+            obrigatorio: true
+          - descricao: "Foi realizado pelo menos um exercício prático de contenção nos últimos 12 meses."
+            obrigatorio: false
+          - descricao: "Existe um registo de lições aprendidas de incidentes ou exercícios anteriores."
+            obrigatorio: true
+          - descricao: "Os playbooks estão integrados com as ferramentas de EDR e rede."
+            obrigatorio: false
+          - descricao: "Os critérios de escalada a fornecedores externos estão documentados."
+            obrigatorio: false
+      3:
+        descricao: "Playbooks detalhados, equipa treinada, revisão pós-incidente."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      4:
+        descricao: "Contenção automatizada para ameaças conhecidas, integração com EDR."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      5:
+        descricao: "Resposta orquestrada com SOAR, contenção em minutos, análise forense integrada."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+
+  # ── RECUPERAR ──────────────────────────────────────────────────────────────
+  - codigo: RC.RP-01
+    dominio: RC
+    titulo: Plano de recuperação e continuidade de negócio
+    descricao_simples: >
+      A organização tem um plano para retomar as operações essenciais
+      o mais rapidamente possível após um incidente grave.
+    critico: true
+    nivel_minimo_base: 2
+    nivel_minimo_importante: 3
+    nivel_minimo_essencial: 4
+    ordem: 1
+    mapeamento:
+      iso27001: ["A.17.1", "A.17.2"]
+      nist_csf: ["RC.RP-1"]
+      dl125: ["Art.21º(2)(c)"]
+    niveis:
+      1:
+        descricao: "Sem plano de recuperação. Restauro ad hoc após incidentes."
+        guia_implementacao:
+          - "1. Identificar os processos e sistemas críticos sem os quais o negócio não funciona."
+          - "2. Definir RTOs (Recovery Time Objectives) — em quanto tempo devem estar recuperados."
+          - "3. Definir RPOs (Recovery Point Objectives) — qual a tolerância máxima à perda de dados."
+          - "4. Documentar os passos de recuperação para cada sistema crítico."
+          - "5. Testar o plano anualmente com um exercício real de restauro."
+        exemplos_evidencias:
+          - "Plano de Continuidade de Negócio documentado"
+          - "Tabela de sistemas críticos com RTO e RPO definidos"
+          - "Registo de teste de recuperação (restauro de backup)"
+        checks:
+          - descricao: "Existe um plano documentado de recuperação após incidente."
+            obrigatorio: true
+          - descricao: "Os sistemas críticos para o negócio estão identificados."
+            obrigatorio: true
+          - descricao: "Existe um objetivo definido de em quanto tempo os sistemas críticos devem estar recuperados."
+            obrigatorio: true
+          - descricao: "O plano de recuperação foi testado nos últimos 12 meses com um exercício real."
+            obrigatorio: false
+          - descricao: "Existem backups offline dos sistemas críticos disponíveis para recuperação."
+            obrigatorio: false
+      2:
+        descricao: "Lista de sistemas críticos identificada, backups regulares."
+        guia_implementacao:
+          - "1. Formalizar o plano de continuidade de negócio (BCP) com procedimentos detalhados."
+          - "2. Definir e documentar RTOs e RPOs para cada sistema crítico."
+          - "3. Realizar testes de restauro completo pelo menos trimestralmente."
+          - "4. Asegurar acesso a meios de recuperação alternativos (hardware de reserva, cloud)."
+          - "5. Comunicar o plano a todos os responsáveis e testar em exercício."
+        exemplos_evidencias:
+          - "BCP documentado com RTOs e RPOs por sistema"
+          - "Resultados de testes de restauro trimestral"
+          - "Inventário de meios de recuperação alternativos"
+        checks:
+          - descricao: "O plano de continuidade inclui RTOs e RPOs documentados por sistema crítico."
+            obrigatorio: true
+          - descricao: "São realizados testes de restauro pelo menos trimestralmente."
+            obrigatorio: true
+          - descricao: "Existem meios alternativos de recuperação documentados (hardware reserva, cloud)."
+            obrigatorio: false
+          - descricao: "O plano foi comunicado a todos os responsáveis."
+            obrigatorio: false
+          - descricao: "Foi realizado um exercício de recuperação completo nos últimos 12 meses."
+            obrigatorio: false
+      3:
+        descricao: "BCP documentado com RTO/RPO, testado anualmente."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      4:
+        descricao: "DRP automatizado, testes de failover regulares, hot standby para sistemas críticos."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      5:
+        descricao: "Recuperação em minutos, automação completa, infraestrutura multi-região."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+
+  - codigo: RC.RP-02
+    dominio: RC
+    titulo: Backup e restauro de dados
+    descricao_simples: >
+      Os dados críticos da organização são copiados regularmente
+      e é possível restaurá-los quando necessário.
+    critico: true
+    nivel_minimo_base: 2
+    nivel_minimo_importante: 3
+    nivel_minimo_essencial: 4
+    ordem: 2
+    mapeamento:
+      iso27001: ["A.12.3"]
+      nist_csf: ["RC.RP-1", "PR.IP-4"]
+      dl125: ["Art.21º(2)(c)"]
+    niveis:
+      1:
+        descricao: "Sem backups regulares. Dados podem ser perdidos permanentemente."
+        guia_implementacao:
+          - "1. Identificar todos os dados críticos que devem ser incluídos nos backups."
+          - "2. Implementar backup automático com frequência adequada (diário para dados críticos)."
+          - "3. Guardar pelo menos uma cópia offline ou offsite."
+          - "4. Testar o restauro mensalmente — não basta ter o backup, tem de funcionar."
+          - "5. Guardar backups por pelo menos 30 dias para permitir recuperação de ransomware."
+        exemplos_evidencias:
+          - "Configuração de backup automático com evidência de execução"
+          - "Registo de teste de restauro bem-sucedido"
+          - "Screenshot de backups armazenados offsite ou offline"
+        checks:
+          - descricao: "Os dados críticos da organização têm backup automático configurado."
+            obrigatorio: true
+          - descricao: "Existe pelo menos uma cópia de backup guardada em local diferente do servidor principal."
+            obrigatorio: true
+          - descricao: "O restauro dos backups foi testado nos últimos 90 dias."
+            obrigatorio: true
+          - descricao: "Os backups são retidos por pelo menos 30 dias."
+            obrigatorio: false
+          - descricao: "Existe alguém responsável por verificar se os backups foram executados com sucesso."
+            obrigatorio: false
+      2:
+        descricao: "Backups manuais ocasionais, sem teste de restauro."
+        guia_implementacao:
+          - "1. Automatizar os backups e configurar notificações de falha."
+          - "2. Implementar a regra 3-2-1 (3 cópias, 2 suportes diferentes, 1 offsite)."
+          - "3. Definir e testar o processo de restauro regular (pelo menos mensal)."
+          - "4. Garantir retenção mínima de 30 dias (proteção contra ransomware)."
+          - "5. Encriptar os backups e documentar o processo de recuperação de chaves."
+        exemplos_evidencias:
+          - "Configuração de backup automático com alertas de falha"
+          - "Registo mensal de teste de restauro com resultado documentado"
+          - "Configuração de retenção de backups por pelo menos 30 dias"
+        checks:
+          - descricao: "Os backups são automáticos com alertas de falha configurados."
+            obrigatorio: true
+          - descricao: "A regra 3-2-1 de backups está implementada."
+            obrigatorio: false
+          - descricao: "São realizados testes de restauro mensalmente com registo do resultado."
+            obrigatorio: true
+          - descricao: "Os backups estão encriptados."
+            obrigatorio: false
+          - descricao: "Os backups são retidos por pelo menos 30 dias."
+            obrigatorio: true
+      3:
+        descricao: "Backup automático diário, teste de restauro mensal, cópia offsite."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      4:
+        descricao: "Backup imutável (WORM), múltiplas localizações, alertas de falha, RPO < 4h."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      5:
+        descricao: "Backup contínuo (CDP), restauro instantâneo, zero RPO para sistemas críticos."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+
+  - codigo: RC.IM-01
+    dominio: RC
+    titulo: Melhorias pós-incidente e lições aprendidas
+    descricao_simples: >
+      Após cada incidente, a organização analisa o que aconteceu e melhora
+      os seus processos para evitar repetições.
+    critico: false
+    nivel_minimo_base: 1
+    nivel_minimo_importante: 2
+    nivel_minimo_essencial: 3
+    ordem: 3
+    mapeamento:
+      iso27001: ["A.16.1"]
+      nist_csf: ["RC.IM-1", "RC.IM-2"]
+      dl125: ["Art.21º(2)(a)"]
+    niveis:
+      1:
+        descricao: "Sem análise pós-incidente. Mesmos erros repetem-se."
+        guia_implementacao:
+          - "1. Após cada incidente, realizar uma reunião de lições aprendidas."
+          - "2. Documentar: o que aconteceu, por que aconteceu, impacto, ações de melhoria."
+          - "3. Atualizar planos, procedimentos e controlos com base nas lições."
+          - "4. Comunicar as lições relevantes a todos os colaboradores."
+          - "5. Verificar na próxima revisão se as ações de melhoria foram implementadas."
+        exemplos_evidencias:
+          - "Relatório de pós-incidente com lições aprendidas"
+          - "Lista de melhorias implementadas após incidentes"
+          - "Ata de reunião de revisão pós-incidente"
+        checks:
+          - descricao: "Após incidentes, é feita uma análise básica do que aconteceu e por quê."
+            obrigatorio: true
+          - descricao: "As conclusões desta análise são documentadas."
+            obrigatorio: false
+          - descricao: "São definidas ações de melhoria para evitar recorrência."
+            obrigatorio: true
+          - descricao: "As lições relevantes são comunicadas aos colaboradores afetados."
+            obrigatorio: false
+          - descricao: "Existe um registo dos incidentes passados com a evolução do estado de resolução."
+            obrigatorio: false
+      2:
+        descricao: "Discussão informal após incidentes significativos."
+        guia_implementacao:
+          - "1. Formalizar o processo de post-mortem com template e prazo definidos (ex: 5 dias após o incidente)."
+          - "2. Criar um registo centralizado de incidentes com estado das acções de melhoria."
+          - "3. Incluir a revisão de incidentes na agenda das reuniões de gestão."
+          - "4. Medir o tempo de resolução e acompanhar a execução das ações."
+          - "5. Partilhar lições relevantes com outros departamentos ou com a indústria."
+        exemplos_evidencias:
+          - "Template de post-mortem formalizado e utilizado"
+          - "Registo de incidentes com estado de acções de melhoria"
+          - "Ata de reunião de gestão onde incidentes foram revistos"
+        checks:
+          - descricao: "Existe um template formalizado para post-mortem de incidentes."
+            obrigatorio: true
+          - descricao: "O registo de incidentes inclui o estado de cada ação de melhoria."
+            obrigatorio: true
+          - descricao: "Os incidentes são revistos em reunião de gestão periodicamente."
+            obrigatorio: false
+          - descricao: "São medidos indicadores de tempo de resolução de incidentes."
+            obrigatorio: false
+          - descricao: "As lições mais relevantes são partilhadas com outros departamentos."
+            obrigatorio: false
+      3:
+        descricao: "Processo formal de post-mortem com relatório e plano de ação."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      4:
+        descricao: "Lições integradas em métricas de maturidade, acompanhamento de ações."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []
+      5:
+        descricao: "Melhoria contínua automatizada, correlação com threat intelligence global."
+        guia_implementacao: []
+        exemplos_evidencias: []
+        checks: []

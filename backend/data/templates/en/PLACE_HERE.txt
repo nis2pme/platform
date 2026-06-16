@@ -1,0 +1,2 @@
+Place DOCX template files here (English versions).
+Expected filenames: information_security_policy.docx, incident_response_plan.docx

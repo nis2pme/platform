@@ -1,0 +1,8 @@
+# Backend build context is the docker/ root (so frameworks/ can be baked in).
+# Keep it lean — these are not needed inside the backend image.
+frontend/
+**/__pycache__/
+*.pyc
+*.pyo
+.git/
+.env
