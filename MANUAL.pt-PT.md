@@ -24,8 +24,8 @@
 ### Hardware mínimo
 | Recurso | Mínimo | Recomendado |
 |---------|--------|-------------|
-| CPU | 1 vCPU | 2 vCPU |
-| RAM | 1 GB | 2 GB |
+| CPU | 2 vCPU | 4 vCPU |
+| RAM | 2 GB | 4 GB |
 | Disco | 20 GB | 50 GB |
 
 ### Sistema operativo suportado
@@ -67,6 +67,8 @@ Por defeito, o script instala numa pasta `./nis2pme`. Para escolher outra:
 NIS2PME_DIR=/opt/nis2pme sh start_nis2pme.sh
 ```
 
+> **O one-liner corre sem perguntas.** Ao ser enviado para o `bash` não tem terminal, por isso usa defaults: o menu de idioma é saltado (**Português**) e é gerado um **certificado temporário self-signed**. Para escolheres o idioma e o modo TLS (ver [Passo 4](#passo-4--segurança-da-ligação-https)), descarrega e corre antes (`sh start_nis2pme.sh`). O certificado também pode ser definido ou substituído mais tarde no assistente de configuração.
+
 ### Opção B — Docker Compose manual
 
 ```bash
@@ -75,14 +77,17 @@ curl -fsSL https://raw.githubusercontent.com/nis2pme/platform/main/docker-compos
 
 # 2. Criar um .env mínimo
 cat > .env <<'EOF'
-APP_URL=http://IP_DO_TEU_SERVIDOR
+APP_URL=https://IP_DO_TEU_SERVIDOR
 DB_PASSWORD=uma-string-longa-e-aleatoria
+TLS_MODE=self-signed
 EOF
 
 # 3. Puxar as imagens e arrancar
 docker compose pull
 docker compose up -d
 ```
+
+> O `TLS_MODE` pode ser `self-signed` (default — gera um certificado temporário), `custom` (o teu certificado + chave — ver [`.env.example`](.env.example)), ou `proxy` (TLS terminado a montante; nesse caso usa `APP_URL=http://…`). A pasta `./certs` é criada automaticamente.
 
 ### Verificar estado
 
@@ -125,7 +130,7 @@ Depois de instalar o Docker, volta à [Secção 2](#2-instalação).
 
 ## 4. Primeiro acesso — Assistente de configuração
 
-Após o sistema arrancar, abre o browser no endereço indicado (ex: `http://192.168.1.50`).
+Após o sistema arrancar, abre o browser no endereço indicado (ex: `https://192.168.1.50`).
 
 O **assistente de configuração** guia-te em 5 passos:
 
@@ -169,11 +174,12 @@ Após completar o assistente, enrolas a **autenticação de dois fatores (TOTP),
 
 ### Ficheiro .env
 
-Criado automaticamente pelo `start_nis2pme.sh`. Contém apenas:
+Criado automaticamente pelo `start_nis2pme.sh`. Contém:
 
 ```env
-APP_URL=http://192.168.1.50       # URL detectado automaticamente
+APP_URL=https://192.168.1.50      # URL detectado automaticamente
 DB_PASSWORD=a3f8c2...             # Password gerada aleatoriamente
+TLS_MODE=self-signed              # Modo de segurança da ligação (self-signed | custom | proxy)
 ```
 
 **Todas as outras variáveis** (secrets JWT, chaves Fernet, etc.) são **auto-geradas** pelo backend no primeiro arranque e guardadas no volume Docker `nis2pme_data`. Não precisas de as definir.

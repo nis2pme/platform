@@ -83,7 +83,9 @@ curl -fsSL https://raw.githubusercontent.com/nis2pme/platform/main/start_nis2pme
 > sh start_nis2pme.sh
 > ```
 
-No fim, abre no browser o URL que aparece (ex.: `http://192.168.1.50`) para correr o **assistente de configuração**.
+No fim, abre no browser o URL que aparece (ex.: `https://192.168.1.50`) para correr o **assistente de configuração**.
+
+> ℹ️ **O one-liner corre sem perguntas.** Ao ser enviado para o `bash` não tem terminal, por isso usa defaults: o menu de idioma é saltado (**Português**) e é gerado um **certificado temporário self-signed** (o browser avisa na 1.ª visita — é normal). Para escolheres o idioma e o modo TLS (certificado próprio / atrás de proxy / self-signed), descarrega e corre antes: `sh start_nis2pme.sh`. Podes sempre definir ou substituir o certificado mais tarde no assistente de configuração.
 
 ### Opção 2 — Docker Compose (um pouco mais de controlo)
 
@@ -95,13 +97,16 @@ curl -fsSL https://raw.githubusercontent.com/nis2pme/platform/main/docker-compos
 
 # 2. Criar um .env mínimo
 cat > .env <<'EOF'
-APP_URL=http://IP_DO_TEU_SERVIDOR
+APP_URL=https://IP_DO_TEU_SERVIDOR
 DB_PASSWORD=mudar-para-uma-string-longa-aleatoria
+TLS_MODE=self-signed
 EOF
 
 # 3. Arrancar (as imagens são puxadas do GHCR — sem build)
 docker compose up -d
 ```
+
+> O `TLS_MODE` pode ser `self-signed` (default — gera um certificado temporário), `custom` (o teu certificado + chave — ver [`.env.example`](.env.example)), ou `proxy` (TLS terminado a montante por Cloudflare/Traefik/Nginx; nesse caso usa `APP_URL=http://…`). A pasta `./certs` é criada automaticamente.
 
 ### Opção 3 — `docker run` manual / build a partir do código
 
@@ -145,7 +150,7 @@ A autenticação de dois fatores (TOTP), obrigatória, é depois enrolada antes 
 
 ## Configuração
 
-A maioria das definições é gerada automaticamente no primeiro arranque e guardada em volumes Docker. Os únicos valores que podes definir no `.env` são `APP_URL` e `DB_PASSWORD`. As definições opcionais (portos personalizados, SMTP para reset de password, domínio/HTTPS) estão documentadas no [`.env.example`](.env.example) e no [MANUAL.md](MANUAL.md).
+A maioria das definições é gerada automaticamente no primeiro arranque e guardada em volumes Docker. Os valores que podes definir no `.env` são `APP_URL`, `DB_PASSWORD` e `TLS_MODE` (e os caminhos do certificado quando `TLS_MODE=custom`). As definições opcionais (portos personalizados, SMTP para reset de password, domínio/HTTPS) estão documentadas no [`.env.example`](.env.example) e no [MANUAL.md](MANUAL.md).
 
 > ⚠️ **Faz backup regular dos volumes `nis2pme_pgdata` (base de dados), `nis2pme_uploads` (evidências) e `nis2pme_data` (secrets de cifra).** Perder o `nis2pme_data` significa que os dados cifrados deixam de poder ser decifrados.
 

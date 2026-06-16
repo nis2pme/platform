@@ -24,8 +24,8 @@
 ### Minimum hardware
 | Resource | Minimum | Recommended |
 |----------|---------|-------------|
-| CPU | 1 vCPU | 2 vCPU |
-| RAM | 1 GB | 2 GB |
+| CPU | 2 vCPU | 4 vCPU |
+| RAM | 2 GB | 4 GB |
 | Disk | 20 GB | 50 GB |
 
 ### Supported operating system
@@ -67,6 +67,8 @@ By default the script installs into a `./nis2pme` folder. To choose another:
 NIS2PME_DIR=/opt/nis2pme sh start_nis2pme.sh
 ```
 
+> **The one-liner runs without prompts.** Piped into `bash` it has no terminal, so it uses defaults: the language menu is skipped (**Portuguese**) and a **temporary self-signed certificate** is generated. To be prompted for the language and the TLS mode (see [Step 4](#step-4--connection-security-https)), download and run it instead (`sh start_nis2pme.sh`). The certificate can also be set or replaced later in the setup wizard.
+
 ### Option B — Manual Docker Compose
 
 ```bash
@@ -75,14 +77,17 @@ curl -fsSL https://raw.githubusercontent.com/nis2pme/platform/main/docker-compos
 
 # 2. Create a minimal .env
 cat > .env <<'EOF'
-APP_URL=http://YOUR_SERVER_IP
+APP_URL=https://YOUR_SERVER_IP
 DB_PASSWORD=a-long-random-string
+TLS_MODE=self-signed
 EOF
 
 # 3. Pull the images and start
 docker compose pull
 docker compose up -d
 ```
+
+> `TLS_MODE` can be `self-signed` (default — a temporary certificate is generated), `custom` (your own certificate + key — see [`.env.example`](.env.example)), or `proxy` (TLS terminated upstream; in that case use `APP_URL=http://…`). A `./certs` folder is created automatically.
 
 ### Check status
 
@@ -125,7 +130,7 @@ After installing Docker, go back to [Section 2](#2-installation).
 
 ## 4. First access — Setup wizard
 
-Once the system is up, open the browser at the address shown (e.g. `http://192.168.1.50`).
+Once the system is up, open the browser at the address shown (e.g. `https://192.168.1.50`).
 
 The **setup wizard** guides you through 5 steps:
 
@@ -169,11 +174,12 @@ After completing the wizard, you enrol the **mandatory two-factor authentication
 
 ### The .env file
 
-Created automatically by `start_nis2pme.sh`. It contains only:
+Created automatically by `start_nis2pme.sh`. It contains:
 
 ```env
-APP_URL=http://192.168.1.50       # Auto-detected URL
+APP_URL=https://192.168.1.50      # Auto-detected URL
 DB_PASSWORD=a3f8c2...             # Randomly generated password
+TLS_MODE=self-signed              # Connection security mode (self-signed | custom | proxy)
 ```
 
 **All other variables** (JWT secrets, Fernet keys, etc.) are **auto-generated** by the backend on first boot and stored in the Docker volume `nis2pme_data`. You do not need to set them.
