@@ -8,7 +8,7 @@ from datetime import datetime
 from pydantic import BaseModel, EmailStr, field_validator, model_validator
 
 from app.auth.models import RoleUtilizador
-from app.empresas.models import DimensaoEmpresa, TipoEntidade
+from app.empresas.models import DimensaoEmpresa, NivelQNRCS, TipoEntidade
 from app.shared.utils import validar_forca_password
 
 
@@ -28,6 +28,7 @@ class RegistarEmpresaSchema(BaseModel):
     empresa_setor: str | None = None
     empresa_dimensao: DimensaoEmpresa | None = None
     empresa_tipo_entidade: TipoEntidade = TipoEntidade.BASE
+    empresa_nivel_qnrcs: NivelQNRCS | None = None
 
     # Dados do admin
     admin_nome: str
@@ -37,6 +38,10 @@ class RegistarEmpresaSchema(BaseModel):
     # RGPD — consentimento obrigatório
     aceitar_termos: bool
     versao_termos: str = "1.0"
+
+    # Plano a provisionar no signup (SaaS). A borda envia "trial"; em prod o registo pode
+    # criar a conta sem plano (billing provisiona depois). Default seguro = "trial".
+    plano: str = "trial"
 
     @field_validator("admin_password")
     @classmethod
@@ -105,6 +110,19 @@ class TokenResponseSchema(BaseModel):
     token_type: str = "bearer"
     utilizador: "UtilizadorInfoSchema"
     # O refresh token vai em httpOnly cookie, não no body
+
+
+class RegistoCriadoSchema(BaseModel):
+    """Resposta do registo de uma nova empresa: conta criada, sem sessão.
+
+    O registo não autentica — a autenticação (incluindo a configuração de 2FA)
+    faz-se no fluxo de login. Assim o registo pode ser intermediado por uma
+    borda externa sem que esta receba tokens de sessão da conta criada.
+    """
+
+    empresa_id: uuid.UUID
+    admin_email: EmailStr
+    mensagem: str = "Conta criada com sucesso."
 
 
 # ---------------------------------------------------------------------------

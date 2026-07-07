@@ -8,8 +8,8 @@ e popula a base de dados com a hierarquia completa.
 Estratégia de upsert: usa code (ex: "ID.AM-01") + framework registry_id
 como chave natural. UUIDs são gerados pelo serviço se o registo não existir.
 
-Não depende do módulo superadmin — pode ser usado pelo seed automático
-on-prem (app.setup.seed_framework) e pelo painel de superadmin.
+Não depende de nenhum painel administrativo — pode ser usado pelo seed automático
+on-prem (app.setup.seed_framework) e por outras integrações internas.
 """
 import uuid
 from datetime import datetime, timezone

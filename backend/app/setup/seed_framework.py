@@ -34,7 +34,7 @@ def _carregar_framework_dir(db: Session, framework_dir: Path) -> bool:
     try:
         data = json.loads(framework_json.read_text(encoding="utf-8"))
 
-        # Separar manifest, structure e profiles (mesmo padrão do router do superadmin)
+        # Separar manifest, structure e profiles (mesmo padrão do importador de frameworks)
         manifest = {k: v for k, v in data.items() if k not in ("profiles", "domains")}
         structure = {"domains": data.get("domains", [])}
         profiles_raw = data.get("profiles")
@@ -70,7 +70,7 @@ def _carregar_framework_dir(db: Session, framework_dir: Path) -> bool:
 
     except Exception:
         logger.exception(
-            "Falha ao importar framework '%s'. Use o painel de superadmin para importar manualmente.",
+            "Falha ao importar framework '%s'.",
             framework_dir.name,
         )
         return False
@@ -80,7 +80,8 @@ def seed_framework_se_necessario(db: Session) -> None:
     """
     Verifica se existe algum framework na DB.
     Se não existir, importa todos os frameworks disponíveis no diretório frameworks/.
-    Chamado no lifespan da app (apenas em DEPLOYMENT_MODE=onprem).
+    Chamado no lifespan da app, em qualquer DEPLOYMENT_MODE (idempotente —
+    só semeia se a tabela estiver vazia).
     """
     count = db.exec(select(Framework).limit(1)).first()
 

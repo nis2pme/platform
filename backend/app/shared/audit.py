@@ -92,6 +92,9 @@ class Acao:
     EMPRESA_DADOS_ATUALIZADOS = "empresa.dados_atualizados"
     EMPRESA_DADOS_EXPORTADOS = "empresa.dados_exportados"
     EMPRESA_ELIMINACAO_PEDIDA = "empresa.conta_eliminacao_pedida"
+    # Gestão privilegiada de tenants (mecanismo interno; ator no campo dados_novos)
+    EMPRESA_SUSPENSA = "empresa.suspensa"
+    EMPRESA_REATIVADA = "empresa.reativada"
 
     # Controlos
     CONTROLO_ESTADO_ALTERADO = "controlo.estado_alterado"
@@ -110,6 +113,11 @@ class Acao:
 
     # Relatórios de auditoria
     RELATORIO_AUDITORIA_CRIADO = "relatorio_auditoria.criado"
+
+    # Assistente IA (premium) — auditoria registada pelo seam (app/premium)
+    ANALISE_IA_SOLICITADA = "analise_ia.solicitada"
+    ANALISE_IA_CONCLUIDA = "analise_ia.concluida"
+    ANALISE_IA_ERRO = "analise_ia.erro"
 
 
 # ---------------------------------------------------------------------------

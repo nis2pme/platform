@@ -21,7 +21,7 @@
 
 **NIS2PME** is a multi-tenant **GRC (Governance, Risk & Compliance) SaaS platform** that helps Portuguese SMEs self-assess their compliance with the **NIS2 Directive** (transposed into Portuguese law by the *Regime Jurídico da Cibersegurança*, as amended by *Decreto-Lei n.º 125/2025*) and the **QNRCS 2026** (Quadro Nacional de Referência para a Cibersegurança).
 
-It is built on a **Universal Control Framework (UCF)** capable of representing any regulatory framework, instantiated here for the **107 controls** based on the public consultation of QNRCS 2026.
+It is built on a **Universal Control Framework (UCF)** capable of representing any regulatory framework, instantiated here for the **107 controls** of the **QNRCS 2026**, as published in *Regulamento n.º 756/2026* (22 June 2026).
 
 The platform is offered under a **dual model**:
 
@@ -158,7 +158,7 @@ Most settings are auto-generated on first boot and stored in Docker volumes. The
 
 ## Project status
 
-NIS2PME is under **active development**. The QNRCS 2026 framework shipped here is based on the **public consultation** and will be updated when the final version is published.
+NIS2PME is under **active development**. The QNRCS 2026 framework shipped here reflects the published *Regulamento n.º 756/2026* (22 June 2026), and will track any later amendments issued by CNCS.
 
 ---
 

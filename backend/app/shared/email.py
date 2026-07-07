@@ -2,8 +2,10 @@
 Abstração de envio de email transacional.
 
 Suporta dois provedores, controlados pela variável de ambiente EMAIL_PROVIDER:
-  - "smtp"  (default) — usa fastapi-mail com servidor SMTP configurável
-  - "brevo"           — usa a API transacional do Brevo (sib-api-v3-sdk)
+  - "smtp"  (default) — usa fastapi-mail com servidor SMTP configurável (on-prem, universal)
+  - "resend"          — usa a API HTTP do Resend (MESMA config do funil saas-trial:
+                        RESEND_API_KEY/RESEND_FROM/RESEND_API_URL — um só serviço de
+                        email para toda a plataforma)
 
 Toda a lógica de envio fica aqui; o resto da aplicação chama apenas
 `enviar_email_reset_password()` sem se preocupar com o provedor.
@@ -46,8 +48,8 @@ async def enviar_email_reset_password(destinatario: str, link: str) -> None:
 
     provedor = settings.EMAIL_PROVIDER.lower()
 
-    if provedor == "brevo":
-        await _enviar_via_brevo(destinatario, assunto, corpo, settings)
+    if provedor == "resend":
+        await _enviar_via_resend(destinatario, assunto, corpo, settings)
     else:
         await _enviar_via_smtp(destinatario, assunto, corpo, settings)
 
@@ -80,46 +82,49 @@ async def _enviar_via_smtp(
     logger.info("Email de reset enviado via SMTP para %s", destinatario)
 
 
-async def _enviar_via_brevo(
+async def _enviar_via_resend(
     destinatario: str, assunto: str, corpo: str, settings
 ) -> None:
     """
-    Envia usando a API transacional do Brevo (sib-api-v3-sdk).
-    O SDK é síncrono — executa em thread executor para não bloquear o event loop.
+    Envia via API HTTP do Resend — a MESMA config/serviço que o funil saas-trial usa
+    para o email de verificação (RESEND_API_KEY/RESEND_FROM/RESEND_API_URL).
+
+    Stdlib (urllib) numa thread — sem dependências novas no open-core (mesma disciplina
+    de app/premium/provisioning.py) e sem bloquear o event loop. O corpo da resposta do
+    Resend NUNCA é exposto ao chamador/utilizador; só o código HTTP vai para o log.
     """
+    import json
+    import urllib.error
+    import urllib.request
+
     def _chamar_api() -> None:
-        import sib_api_v3_sdk
-        from sib_api_v3_sdk.rest import ApiException
-
-        configuration = sib_api_v3_sdk.Configuration()
-        configuration.api_key["api-key"] = settings.BREVO_API_KEY
-
-        api_instance = sib_api_v3_sdk.TransactionalEmailsApi(
-            sib_api_v3_sdk.ApiClient(configuration)
-        )
-
-        email_obj = sib_api_v3_sdk.SendSmtpEmail(
-            to=[{"email": destinatario}],
-            sender={
-                "name": settings.SMTP_FROM_NAME,
-                "email": settings.SMTP_FROM_EMAIL,
+        payload = json.dumps(
+            {
+                "from": settings.RESEND_FROM,
+                "to": [destinatario],
+                "subject": assunto,
+                "text": corpo,
+            }
+        ).encode("utf-8")
+        req = urllib.request.Request(
+            settings.RESEND_API_URL,
+            data=payload,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {settings.RESEND_API_KEY}",
+                "Content-Type": "application/json",
+                # UA explícito: o default "Python-urllib/x" é bloqueado pela Cloudflare
+                # à frente da API do Resend (erro 1010 "banned browser signature").
+                "User-Agent": "nis2pme-backend/1.0",
             },
-            subject=assunto,
-            text_content=corpo,
         )
-
         try:
-            api_instance.send_transac_email(email_obj)
-        except ApiException as exc:
-            logger.error(
-                "Brevo API erro %s (%s) — verifique BREVO_API_KEY no .env",
-                exc.status,
-                exc.reason,
-            )
-            raise RuntimeError(
-                f"Brevo API erro {exc.status}: {exc.reason}"
-            ) from exc
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                if resp.status >= 400:
+                    raise RuntimeError(f"Resend devolveu {resp.status}")
+        except urllib.error.HTTPError as exc:
+            logger.error("Resend API erro %s — verifique RESEND_API_KEY/RESEND_FROM no .env", exc.code)
+            raise RuntimeError(f"Resend API erro {exc.code}") from exc
 
-    # Executa o SDK síncrono numa thread separada para não bloquear asyncio
     await asyncio.to_thread(_chamar_api)
-    logger.info("Email de reset enviado via Brevo para %s", destinatario)
+    logger.info("Email de reset enviado via Resend para %s", destinatario)

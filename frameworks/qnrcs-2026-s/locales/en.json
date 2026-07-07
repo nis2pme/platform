@@ -3,8 +3,8 @@
   "contributor": "Daniel Barreiros",
   "status": "draft",
   "framework": {
-    "name": "QNRCS-2026.1",
-    "description": "National Cybersecurity Reference Framework (QNRCS) — version 2026.1, published by the National Cybersecurity Centre (CNCS). Organises cybersecurity measures into 6 domains (Govern, Identify, Protect, Detect, Respond and Recover) with 4 maturity levels: Basic, Substantial, High and Advanced."
+    "name": "QNRCS-2026-s",
+    "description": "National Cybersecurity Reference Framework (QNRCS) — version 2026, published on Regulation 756/2026, 22 june 2026"
   },
   "domains": {
     "GR": {
@@ -203,7 +203,7 @@
             "Excel sheet with columns: Law/Regulation | Concrete obligation | Conformity status (compliant/non-compliant) | Corrective action (if applicable) | Responsible | Verification date, signed by the IT manager or legal advisor.",
             "Copy of internal records or decisions that prove compliance with legal requirements (e.g. appointment of DPO, registration with the CNCS, contracts with security clauses)."
           ],
-            "tip": "Start with GDPR and national cybersecurity legislation. The CNCS (National Cybersecurity Centre) website has practical guides on legal obligations for companies.",
+          "tip": "Start with GDPR and national cybersecurity legislation. The CNCS (National Cybersecurity Centre) website has practical guides on legal obligations for companies.",
           "effort": "4–8 hours | One person (with legal support if necessary) | No additional cost"
         },
         "2": {
@@ -320,34 +320,26 @@
       "description": "The company identifies the essential external services on which it depends (e.g. internet provider, email service, cloud platform) and communicates this information to interested parties.",
       "maturity_levels": {
         "1": {
-          "description": "Identify, document and communicate the critical external services on which the entity depends, respecting the need to know principle.",
+          "description": "Identify, document, classify and prioritize the critical external services on which the entity depends, communicate them to interested parties (need to know) and include this identification in the risk management process.",
           "indicators": [
             "List all external services and suppliers that the company depends on to function (internet, email, web hosting, cloud software, accounting, etc.).",
             "Identify which of these services are critical (the failure of which would impede the normal functioning of the company).",
-            "Document the list with the supplier's name, emergency contact and criticality level.",
-            "Communicate this list to relevant internal stakeholders, sharing only what is necessary."
+            "Document the list with the supplier's name, emergency contact, classification and priority (criticality).",
+            "Communicate this list to relevant internal stakeholders, sharing only what is necessary.",
+            "Include the identification of critical external services in the company's risk management process."
           ],
           "evidence": [
-            "Excel sheet or PDF document with columns: External service | Supplier | Emergency contact | Rating (critical/non-critical) | Identification date, signed by the IT manager.",
-            "Email or meeting minutes proving communication of this list to internal interested parties."
+            "Excel sheet or PDF document with columns: External service | Supplier | Emergency contact | Rating (critical/non-critical) | Priority | Identification date, signed by the IT manager.",
+            "Email or meeting minutes proving communication of this list to internal interested parties.",
+            "Record of the risk management process that covers the critical external services on which the entity depends."
           ],
           "tip": "Think about all the services you use every day and ask yourself: if this supplier stopped tomorrow, would you be able to work? If not, it is a critical dependency.",
-          "effort": "2–4 hours | One person | No additional cost"
+          "effort": "3–5 hours | One person | No additional cost"
         },
         "2": {
-          "description": "Classify, prioritize and integrate external critical services into the risk management process, including classification and prioritization criteria.",
-          "indicators": [
-            "Define criteria for classifying and prioritizing external critical services (e.g. impact on operations, maximum tolerable time of unavailability, possibility of replacement).",
-            "Apply the criteria to each critical external service and assign priorities.",
-            "Integrate these services into the risk management process, ensuring they are included in risk assessments.",
-            "Register and approve the result of classification and integration."
-          ],
-          "evidence": [
-            "PDF or Excel document with columns: External service | Classification criteria | Priority | Integrated in risk management (yes/no), approved by management.",
-            "Print or excerpt of the risk management register showing the inclusion of critical external services."
-          ],
-          "tip": "When prioritizing, also consider whether there is an alternative supplier available in the market. Dependencies with no alternative are always higher priority.",
-          "effort": "3–5 hours | One person | No additional cost"
+          "description": "Substantial",
+          "indicators": [],
+          "evidence": []
         },
         "3": {
           "description": "High",
@@ -559,16 +551,6 @@
       "description": "The company's management and administration demonstrate that they understand their role in cybersecurity and provide the necessary resources to continuously improve it.",
       "maturity_levels": {
         "1": {
-          "description": "Basic",
-          "indicators": [],
-          "evidence": []
-        },
-        "2": {
-          "description": "Substantial",
-          "indicators": [],
-          "evidence": []
-        },
-        "3": {
           "description": "Management and administration must provide the necessary resources for the continuous improvement of cybersecurity, through an approved plan with measures, deadlines and resources.",
           "indicators": [
             "Develop a Continuous Cybersecurity Improvement Plan, with concrete measures to implement (e.g. annual training, updating tools, reviewing processes).",
@@ -583,6 +565,16 @@
           ],
           "tip": "The plan does not need to be ambitious. Three to five improvements per year, with defined deadlines and responsible people, already show real commitment from management.",
           "effort": "4–8 hours | One person (with direction) | No additional cost"
+        },
+        "2": {
+          "description": "Substantial",
+          "indicators": [],
+          "evidence": []
+        },
+        "3": {
+          "description": "High",
+          "indicators": [],
+          "evidence": []
         },
         "4": {
           "description": "Advanced",
@@ -1026,25 +1018,24 @@
           "evidence": []
         },
         "2": {
-          "description": "Substantial",
-          "indicators": [],
-          "evidence": []
-        },
-        "3": {
-          "description": "Identify, approve, manage and keep supply chain cybersecurity risks updated, integrating them into transversal processes. Include clauses in contracts that allow for continuous evaluation of suppliers.",
+          "description": "Identify, approve, manage and keep updated, whenever changes occur, the cybersecurity risks associated with the supply chain, integrating their management processes into the entity's cross-cutting cybersecurity and risk management processes.",
           "indicators": [
             "Identify and record cybersecurity risks specific to the supply chain (e.g. supplier with VPN access, cloud service with sensitive data).",
-            "Integrate these risks into the company's global cybersecurity risk register.",
-            "Include clauses in contracts with suppliers that allow you to assess the supplier's cybersecurity and correct identified flaws.",
-            "Submit the identification and integration of risks for management approval.",
+            "Integrate these risks into the global cybersecurity risk register and into the entity's cross-cutting risk management processes.",
+            "Submit the identification, approval and management of risks to management.",
             "Update risks whenever there are changes in the supply chain (new suppliers, termination of contracts)."
           ],
           "evidence": [
-            "Risk register (Excel or PDF) that includes a section or tab dedicated to supply chain risks, with columns: Supplier | Risk identified | Risk level | Treatment | Date, approved by management.",
-            "PDF contract or contractual clause template with provisions for: continuous assessment of supplier cybersecurity | correction of identified flaws."
+            "Risk register (Excel or PDF) with a section or tab dedicated to supply chain risks, with columns: Supplier | Risk identified | Risk level | Treatment | Date, approved by management.",
+            "Documented record of the identification, approval, management and updating of cybersecurity risks associated with the supply chain (minutes or update history)."
           ],
-          "tip": "When renewing contracts with suppliers, take the opportunity to include cybersecurity clauses. It is simpler and more natural than trying to renegotiate existing contracts.",
-          "effort": "6–10 hours | One person | No additional cost"
+          "tip": "Start with suppliers that have access to your systems or data. These represent the greatest risk and should be the first to enter the register.",
+          "effort": "5–8 hours | One person | No additional cost"
+        },
+        "3": {
+          "description": "High",
+          "indicators": [],
+          "evidence": []
         },
         "4": {
           "description": "Advanced",
@@ -1090,7 +1081,7 @@
         }
       }
     },
-"GR.CA-5": {
+    "GR.CA-5": {
       "title": "Entities define and integrate cybersecurity risk management requirements for the supply chain into supplier contracts and other agreements",
       "description": "The company includes clear cybersecurity requirements in its supplier contracts to ensure that suppliers comply with the required security standards.",
       "maturity_levels": {
@@ -1492,28 +1483,28 @@
       }
     },
     "ID.GA-4": {
-      "title": "Networks and external information systems are identified and cataloged",
-      "description": "The company identifies and records the systems and networks it operates outside its facilities (e.g. cloud servers, externally hosted applications, equipment in third-party data centers), knowing where they are and who manages them.",
+      "title": "Services provided by suppliers are inventoried",
+      "description": "The company maintains an updated inventory of all external services provided by suppliers that it uses and depends on, knowing who is responsible for managing each service and its dependencies.",
       "maturity_levels": {
         "1": {
-          "description": "Basic",
-          "indicators": [],
-          "evidence": []
-        },
-        "2": {
-          "description": "Include in the asset inventory information systems that are located outside the entity's physical facilities.",
+          "description": "Include in the asset inventory the services provided by suppliers that the entity uses and depends on.",
           "indicators": [
-            "Identify all of the company's information systems that are housed outside of its facilities (cloud servers, SaaS applications, external databases, equipment in third-party data centers).",
-            "For each external system, record: name, type, location (supplier/data center), internal responsible, external responsible (supplier) and criticality level.",
+            "Identify all services provided by suppliers that the company uses and depends on (e.g. IT maintenance, hosting, software as a service, external accounting).",
+            "For each service, record: supplier, type of service, internal manager and associated dependencies.",
             "Include this information in the existing asset inventory, in an integrated manner.",
-            "Update whenever there are changes (new services, migrations, closures)."
+            "Update whenever there are changes (new services, termination of contracts)."
           ],
           "evidence": [
-            "Asset inventory (Excel or system) with tab or section dedicated to external systems, with columns: System name | Type | External location | Supplier | Internal responsible | Criticality | Update date, validated by the IT manager.",
-            "Record of the last update date of the external systems inventory."
+            "Asset inventory (Excel or system) that includes the services provided by suppliers, with columns: Service | Supplier | Internal responsible | Dependencies | Update date, validated by the IT manager.",
+            "Record of the last update date of the supplier services inventory."
           ],
-          "tip": "Make a quick list of all the cloud services you use (Microsoft 365, Google Workspace, invoicing software, etc.). There are often forgotten cloud services that are no longer used but are still active.",
+          "tip": "Review the invoices from recent months: each recurring supplier of an IT or digital service is a candidate to enter this inventory.",
           "effort": "2–4 hours | One person | No additional cost"
+        },
+        "2": {
+          "description": "Substantial",
+          "indicators": [],
+          "evidence": []
         },
         "3": {
           "description": "High",
@@ -1573,6 +1564,11 @@
           "evidence": []
         },
         "2": {
+          "description": "Substantial",
+          "indicators": [],
+          "evidence": []
+        },
+        "3": {
           "description": "Identify and classify the data and respective metadata processed by the entity, in accordance with the Data Classification and Management Policy.",
           "indicators": [
             "List the types of data that the company processes (personal data, financial data, commercial data, technical data, etc.).",
@@ -1587,11 +1583,6 @@
           ],
           "tip": "If the company has already carried out the GDPR exercise (registration of personal data processing activities), part of the work is done. Extend this record to other types of data.",
           "effort": "4–8 hours | One person | No additional cost"
-        },
-        "3": {
-          "description": "High",
-          "indicators": [],
-          "evidence": []
         },
         "4": {
           "description": "Advanced",
@@ -1638,21 +1629,9 @@
           "effort": "8–12 hours | One person | No additional cost"
         },
         "3": {
-          "description": "Monitor third-party maintenance equipment, inspect maintenance devices, ensure safe disposal of assets and verify safety controls after maintenance.",
-          "indicators": [
-            "Monitor the use of third-party maintenance equipment on the company's assets (recording who accessed it, when and to which systems).",
-            "Inspect and protect third-party maintenance equipment and storage devices with malicious code detection solutions before connecting them to systems.",
-            "Include in the Asset Lifecycle Management Policy measures for the safe disposal of assets (delete data according to the information classification).",
-            "After each maintenance, update or repair, check that security controls remain active and functional.",
-            "Record the results of checks and take corrective action if necessary."
-          ],
-          "evidence": [
-            "Record of use of third-party maintenance equipment (Excel or PDF) with columns: Date | Supplier | Technical | Asset accessed | Equipment used | Inspection carried out (yes/no).",
-            "Excerpt from the Asset Lifecycle Management Policy with measures for safe disposal, approved by management.",
-            "Post-maintenance security control verification log (Excel or PDF) with: Active | Maintenance carried out | Checks checked | Result | Corrective measures (if applicable)."
-          ],
-          "tip": "Before throwing away a computer or disk, use a secure erase tool (such as DBAN) to ensure that no data is recoverable. Formatting is not enough.",
-          "effort": "2–4 hours per maintenance/disposal | An IT person | Cost of tools (most free)"
+          "description": "High",
+          "indicators": [],
+          "evidence": []
         },
         "4": {
           "description": "Advanced",
@@ -2032,7 +2011,7 @@
             "Record of treated vulnerabilities (Excel) with columns: Vulnerability | Source (internal/external) | Communication date | Valid (yes/no) | Treatment action | Resolution date | Responsible, signed by the IT manager.",
             "Technical evidence of the treatment applied (e.g. print of the applied patch, configuration change)."
           ],
-            "tip": "Create a dedicated email address (e.g. security@company.com) to receive vulnerability reports. It's simple and shows that the company takes security seriously.",
+          "tip": "Create a dedicated email address (e.g. security@company.com) to receive vulnerability reports. It's simple and shows that the company takes security seriously.",
           "effort": "1–2 hours per vulnerability | One person | No additional cost"
         },
         "2": {
@@ -3191,11 +3170,6 @@
           "evidence": []
         },
         "2": {
-          "description": "Substantial",
-          "indicators": [],
-          "evidence": []
-        },
-        "3": {
           "description": "Development and test environments must be isolated from the production environment, both in terms of access and data.",
           "indicators": [
             "Ensure that development and test environments are on servers or networks separate from the production environment.",
@@ -3210,6 +3184,11 @@
           ],
           "tip": "Even in a small company, you can separate environments using virtual machines. Never use the production server for testing, as an error can affect all users.",
           "effort": "4–8 hours | An IT person | Variable cost (virtual machine or additional server)"
+        },
+        "3": {
+          "description": "High",
+          "indicators": [],
+          "evidence": []
         },
         "4": {
           "description": "Advanced",
@@ -3228,21 +3207,9 @@
           "evidence": []
         },
         "2": {
-          "description": "Implement emergency and fire safety systems. Monitor environmental conditions that may affect critical systems. Protect infrastructures against electrical changes.",
-          "indicators": [
-            "Install fire detection and fighting systems in the server room (extinguishers suitable for electrical equipment, smoke detectors).",
-            "Install UPS (uninterruptible power supply) on critical systems to protect against power surges and power outages.",
-            "Install temperature and humidity sensors in the server room and configure alerts when values ​​exceed acceptable limits.",
-            "Document emergency procedures for each type of threat (fire, flood, power failure)."
-          ],
-          "evidence": [
-            "Photograph or screenshot of the fire detection systems and extinguishers in the server room.",
-            "Screen print or photo of UPS installed in critical systems.",
-            "Screen print of temperature/humidity sensors and configured alerts.",
-            "PDF document with emergency procedures, validated by the person responsible."
-          ],
-          "tip": "A basic UPS to protect a server costs between €100 and €300 and gives enough time to shut down the system in a controlled manner in the event of a power failure. It is a fundamental investment.",
-          "effort": "4–8 hours | One person | Variable cost (UPS, sensors, extinguishers)"
+          "description": "Substantial",
+          "indicators": [],
+          "evidence": []
         },
         "3": {
           "description": "Implement fire detection with automatic notification. Periodically test the effectiveness of security controls applied to physical environments.",
@@ -3829,7 +3796,7 @@
             "Screen print of the configuration of automatic alerts in monitoring systems (recipients, channels).",
             "Screen print showing that event information is accessible to authorized personnel in the systems."
           ],
-            "tip": "Create a dedicated email group (e.g. security-alerts@company.com) where all alerts are sent. This way, even if one person is absent, another team member still sees the alert.",
+          "tip": "Create a dedicated email group (e.g. security-alerts@company.com) where all alerts are sent. This way, even if one person is absent, another team member still sees the alert.",
           "effort": "2–4 hours | An IT person | No additional cost"
         },
         "3": {
@@ -4488,21 +4455,6 @@
       "description": "Before using a backup or other resource to restore systems after an incident, the organization verifies that these resources are healthy, not corrupted, and do not contain malicious software.",
       "maturity_levels": {
         "1": {
-          "description": "Basic",
-          "indicators": [],
-          "evidence": []
-        },
-        "2": {
-          "description": "Substantial",
-          "indicators": [],
-          "evidence": []
-        },
-        "3": {
-          "description": "High",
-          "indicators": [],
-          "evidence": []
-        },
-        "4": {
           "description": "Before using backups or other restoration assets, their integrity and authenticity must be verified to avoid reintroducing problems into systems.",
           "indicators": [
             "Before using a backup copy for restoration, check that it is intact (not corrupted, does not contain malicious software, corresponds to the expected version).",
@@ -4516,6 +4468,21 @@
           ],
           "tip": "Don't blindly trust backups. A backup infected with the same malicious software that caused the incident will reintroduce the problem. Always check before restoring.",
           "effort": "1–2 hours per scan | One person | No additional cost"
+        },
+        "2": {
+          "description": "Substantial",
+          "indicators": [],
+          "evidence": []
+        },
+        "3": {
+          "description": "High",
+          "indicators": [],
+          "evidence": []
+        },
+        "4": {
+          "description": "Advanced",
+          "indicators": [],
+          "evidence": []
         }
       }
     },

@@ -42,13 +42,15 @@ limiter = Limiter(key_func=obter_ip_cliente, default_limits=["200/minute"])
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Seed automático do framework (on-prem: carrega framework se não existir)
-    if settings.DEPLOYMENT_MODE == "onprem":
-        from sqlmodel import Session
-        from app.setup.seed_framework import seed_framework_se_necessario
-        with Session(engine) as _seed_db:
-            seed_framework_se_necessario(_seed_db)
+    # Seed automático do framework (carrega framework se não existir na DB).
+    # Necessário em saas/saas-trial também: não há wizard de setup nesses modos
+    # para o fazer manualmente, e o FRAMEWORKS_DIR vem sempre cozido na imagem.
+    from sqlmodel import Session
+    from app.setup.seed_framework import seed_framework_se_necessario
+    with Session(engine) as _seed_db:
+        seed_framework_se_necessario(_seed_db)
 
+    if settings.DEPLOYMENT_MODE == "onprem":
         # Verificação de atualizações: arranque + cada 24h (respeita VERIFY_UPDATES).
         import asyncio
         from app.updates.service import verificar_updates_sync
@@ -150,6 +152,8 @@ from app.setup.router import router as setup_router  # noqa: E402
 from app.plano_prioritario.router import router as plano_prioritario_router  # noqa: E402
 from app.documentos.router import router as documentos_router  # noqa: E402
 from app.updates.router import router as updates_router  # noqa: E402
+from app.premium.router import router as premium_router  # noqa: E402
+from app.premium.analise_router import router as premium_analise_router  # noqa: E402
 
 app.include_router(auth_router, prefix="/api")
 app.include_router(audit_logs_router, prefix="/api")
@@ -163,6 +167,17 @@ app.include_router(setup_router, prefix="/api")
 app.include_router(plano_prioritario_router, prefix="/api")
 app.include_router(documentos_router, prefix="/api")
 app.include_router(updates_router, prefix="/api")
+app.include_router(premium_router, prefix="/api")
+app.include_router(premium_analise_router, prefix="/api")
+
+# Router interno de gestão privilegiada de tenants (suspender/reativar). Mecanismo
+# máquina-a-máquina: montado SÓ em saas e com token presente. Em on-prem nem existe —
+# não há rota nem caminho de código para o atingir.
+if settings.DEPLOYMENT_MODE == "saas" and settings.CORE_SUSPEND_TOKEN:
+    from app.internal_admin.router import router as internal_admin_router  # noqa: E402
+
+    app.include_router(internal_admin_router)
+    logger.info("Router interno de gestão de tenants montado (saas + token).")
 
 # ---------------------------------------------------------------------------
 # Healthcheck público

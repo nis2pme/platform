@@ -46,9 +46,11 @@ def configurar_email_smtp(dados: SetupEmailSchema) -> dict:
         get_settings()
     except ValidationError as exc:
         logger.exception("Configuração SMTP inválida após gravação no .env.")
+        # Não ecoar o texto da exceção ao utilizador (pode revelar internos/valores) —
+        # mensagem estável; o detalhe completo fica no log do servidor acima.
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Configuração SMTP inválida: {exc.errors()[0].get('msg', exc)}",
+            detail="Configuração SMTP inválida. Verifique host, porta e credenciais.",
         ) from exc
 
     return {"email_ativo": True}

@@ -320,6 +320,7 @@ def registar_empresa_e_admin(
         setor=dados.empresa_setor,
         dimensao=dados.empresa_dimensao,
         tipo_entidade=dados.empresa_tipo_entidade,
+        nivel_qnrcs=dados.empresa_nivel_qnrcs,
     )
     db.add(empresa)
     db.flush()  # obter empresa.id sem commit
@@ -431,7 +432,7 @@ def login_passo1(
         temp_token = criar_temp_token(utilizador, "password_change_required")
         return {"tipo": "password_temporaria", "temp_token": temp_token}
 
-    # Verifica se a empresa da qual este utilizador faz parte está suspensa pelo superadmin
+    # Verifica se a empresa da qual este utilizador faz parte está suspensa
     empresa = db.get(Empresa, utilizador.empresa_id)
     if empresa and empresa.suspenso:
         registar_acao(
@@ -627,7 +628,7 @@ async def solicitar_reset_password(
     db: Session, email: str, request: Request | None = None
 ) -> None:
     """
-    Cria token de reset e envia email via provedor configurado (SMTP ou Brevo).
+    Cria token de reset e envia email via provedor configurado (SMTP ou Resend).
     Resposta sempre genérica — não revela se o email existe (evita user enumeration).
     """
     from app.shared.email import enviar_email_reset_password
@@ -665,7 +666,9 @@ async def solicitar_reset_password(
         )
         db.commit()
 
-        link = f"{settings.APP_URL}/reset-password?token={token}"
+        # Lido fresco: o wizard de HTTPS pode mudar o APP_URL (esquema/domínio) sem
+        # reiniciar o processo; o link do email tem de refletir o valor atual.
+        link = f"{get_settings().APP_URL}/reset-password?token={token}"
         await enviar_email_reset_password(email, link)
 
 
@@ -696,6 +699,19 @@ def confirmar_reset_password(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Token inválido.",
+        )
+
+    # Política de password também no reset (paridade com os outros fluxos): força mínima
+    # e impedir reutilização da password atual (CWE-521 / NIS2).
+    from app.shared.utils import validar_forca_password
+
+    valida, mensagem = validar_forca_password(nova_password)
+    if not valida:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=mensagem)
+    if verify_password(nova_password, utilizador.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A nova password não pode ser igual à password atual.",
         )
 
     # Atualizar password

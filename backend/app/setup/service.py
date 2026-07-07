@@ -160,8 +160,10 @@ def executar_setup(
         },
     }
 
-    # Se SMTP não configurado, devolver código de aviso (texto traduzido no frontend)
-    if not settings.EMAIL_ENABLED:
+    # Se SMTP não configurado, devolver código de aviso (texto traduzido no frontend).
+    # Lido fresco: o passo de email do wizard pode tê-lo ativado antes deste passo,
+    # sem reiniciar o processo.
+    if not get_settings().EMAIL_ENABLED:
         resposta["aviso_smtp"] = "email_nao_configurado"
 
     return resposta

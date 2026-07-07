@@ -42,6 +42,7 @@ def get_setup_status(db: Session = Depends(get_session)):
     return SetupStatusSchema(
         configurado=service.verificar_setup_completo(db),
         deployment_mode=settings.DEPLOYMENT_MODE,
+        is_trial=settings.IS_TRIAL and settings.DEPLOYMENT_MODE == "saas",
     )
 
 

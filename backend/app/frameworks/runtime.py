@@ -33,7 +33,7 @@ _FRAMEWORK_CACHE_TTL = 900  # 15 minutos
 
 
 def invalidar_cache_framework() -> None:
-    """Invalida o cache do framework padrão. Chamar após alterações via superadmin."""
+    """Invalida o cache do framework padrão. Chamar após alterações ao catálogo de frameworks."""
     _framework_cache.clear()
 
 
@@ -141,7 +141,7 @@ def resolver_framework_empresa(db: Session, empresa: Empresa) -> Framework:
     if not default:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Nenhum framework ativo disponível. Importe um framework no superadmin.",
+            detail="Nenhum framework ativo disponível.",
         )
 
     empresa.framework_id = default.id
@@ -154,9 +154,8 @@ def ensure_framework_catalog(db: Session) -> Framework | None:
     """Devolve o framework padrão activo a partir da base de dados.
 
     Não acede ao filesystem nem executa importações.
-    O bootstrapping inicial é da responsabilidade do seed (bootstrap_framework_catalog)
-    e do Superadmin Portal. Chamadas em runtime (requests de utilizadores) apenas lêem
-    o que já existe na DB.
+    O bootstrapping inicial é da responsabilidade do seed (bootstrap_framework_catalog).
+    Chamadas em runtime (requests de utilizadores) apenas lêem o que já existe na DB.
     """
     return _ensure_default_flag(db)
 

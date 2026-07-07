@@ -1,0 +1,116 @@
+// =============================================================================
+// premium.v1 — contrato CANÓNICO entre o open-core (cliente) e o sidecar premium
+// (servidor). Este ficheiro é a fonte de verdade; a cópia em premium/proto/
+// (sidecar) tem de ser mantida IDÊNTICA.
+//
+// Assistente IA: o SIDECAR é dono do ciclo de vida do job (admissão, submissão,
+// polling de reconciliação e persistência). O core só monta o contexto (evidências
+// seladas em envelope), submete-o e lê o estado — nunca faz polling nem guarda job.
+// =============================================================================
+syntax = "proto3";
+
+package premium.v1;
+
+service PremiumProvider {
+  // Verifica se um tenant tem direito a uma feature. Resposta cacheável (TTL curto).
+  rpc CheckEntitlement (EntitlementQuery) returns (EntitlementResult);
+
+  // Assistente IA — submissão. Upload client-streaming: a 1ª mensagem traz `meta`,
+  // as seguintes os chunks de evidências (payload cifrado em envelope pelo core). O
+  // sidecar faz admissão, submete ao gateway e persiste; devolve o estado do job.
+  rpc CriarAnaliseGaps (stream ChunkContexto) returns (AnaliseJob);
+  // Estado/resultado do job mais recente de um controlo (o sidecar é dono do job).
+  rpc ObterAnalisePorControlo (AnaliseControloRef) returns (AnaliseJob);
+}
+
+message EntitlementQuery {
+  // Identificador do tenant. Em saas = empresa_id; em on-prem single-tenant pode
+  // vir vazio (o sidecar usa a licença local, ignorando o campo).
+  string tenant_id = 1;
+  // Chave da feature (ex.: "ai_assistant", "advanced_reports", "iso27001_pack").
+  string feature = 2;
+}
+
+message EntitlementResult {
+  bool enabled = 1;
+  // Limites associados, já resolvidos (ex.: {"tokens_mes": "2000000"}).
+  map<string, string> limits = 2;
+  // Expiração efetiva (RFC3339) resolvida pelo provider; vazio = herda do termo global.
+  string expires_at = 3;
+  // Razão de recusa, para diagnóstico (ex.: "not_in_plan", "expired", "limit_reached").
+  string reason = 4;
+}
+
+// ── Assistente IA (AnalisarGaps) ─────────────────────────────────────────────
+
+// Mensagem do stream de submissão. A 1ª traz `meta`; as seguintes `evidencia`.
+message ChunkContexto {
+  oneof parte {
+    MetaContexto meta = 1;
+    bytes evidencia = 2;   // chunk do payload de evidências (cifrado em envelope)
+  }
+}
+
+message MetaContexto {
+  string tenant_id = 1;
+  // Controlo do cliente a analisar. É a chave do job no sidecar (por tenant).
+  string controlo_empresa_id = 2;
+  // Identificador estável do framework (registry_id, ex.: "qnrcs-2026-s"). O
+  // servidor usa-o para localizar o bundle do framework e resolver o controlo.
+  string framework_id = 3;
+  string controlo_codigo = 4;
+  // Nível de conformidade exigido à entidade; o servidor recolhe os exemplos de
+  // evidência esperados dos níveis 1..nivel_minimo. NÃO inclui o estado atual
+  // da entidade (nem gaps nem nível atual) — só evidências submetidas são analisadas.
+  int32 nivel_minimo = 5;
+  string locale = 6;          // "pt-PT" | "en"
+  // Chave de idempotência gerada pelo CORE. Reenvio com a mesma chave → o sidecar
+  // devolve o job existente, sem trabalho novo.
+  string idempotency_key = 7;
+  // NOTA RGPD: o payload de evidências PODE conter PII — regido por DPA.
+}
+
+message AnaliseControloRef {
+  string tenant_id = 1;
+  string controlo_empresa_id = 2;
+  // Se true e o job estiver terminal e ainda não auditado pelo core, o sidecar
+  // marca-o atomicamente e devolve auditoria_pendente=true a UM só chamador — para
+  // a auditoria de conclusão (que vive no core-db) ser registada exatamente uma vez.
+  bool reclamar_auditoria = 3;
+}
+
+message AnaliseJob {
+  enum Estado {
+    PENDENTE = 0;
+    PROCESSANDO = 1;
+    CONCLUIDO = 2;
+    ERRO = 3;
+  }
+  // UUID interno do job na store do sidecar. Vazio = não existe job para o controlo.
+  string job_id = 1;
+  string controlo_empresa_id = 2;
+  Estado estado = 3;
+  RelatorioGaps relatorio = 4;   // preenchido só em CONCLUIDO
+  // Código estável (i18n) para o utilizador, só em ERRO: "generico" | "timeout" |
+  // "resultado_invalido". Nunca texto técnico livre.
+  string erro_codigo = 5;
+  // Categoria de erro para a auditoria (só em ERRO), de uma allowlist fixa.
+  string erro_categoria = 6;
+  string created_at = 7;         // RFC3339
+  string updated_at = 8;         // RFC3339
+  // True apenas na resposta a ObterAnalisePorControlo com reclamar_auditoria: indica
+  // que ESTE chamador ganhou o direito/dever de registar a auditoria de conclusão.
+  bool auditoria_pendente = 9;
+}
+
+// Relatório estruturado da análise de gaps.
+message RelatorioGaps {
+  string resumo_executivo = 1;
+  repeated string pontos_positivos = 2;
+  repeated string lacunas_identificadas = 3;
+  repeated string recomendacoes = 4;
+  int32 score_qualidade_documentacao = 5;   // 0-100
+  int32 score_robustez_implementacao = 6;   // 0-100
+  string nivel_confianca = 7;               // "alto" | "medio" | "baixo"
+  string gerado_em = 8;                      // RFC3339
+}

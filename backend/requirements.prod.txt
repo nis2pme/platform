@@ -18,7 +18,7 @@ uvicorn[standard]==0.41.0
 
 # --- Pydantic / settings ---
 pydantic[email]==2.12.5
-pydantic-settings==2.13.1
+pydantic-settings==2.14.2
 
 # --- Base de dados ---
 sqlalchemy==2.0.48
@@ -30,20 +30,23 @@ psycopg2-binary==2.9.11
 python-jose[cryptography]==3.5.0
 argon2-cffi==23.1.0
 pyotp==2.9.0
-cryptography==47.0.0
+cryptography==49.0.0
 python-multipart==0.0.32
 
 # --- Email ---
-fastapi-mail==1.6.4
-sib-api-v3-sdk==7.6.0
+# smtp (on-prem) via fastapi-mail; resend (SaaS) via stdlib urllib — sem SDK dedicado.
+fastapi-mail==1.6.5
 
 # --- Rate limiting ---
 slowapi==0.1.9
 
 # --- Ficheiros e documentos ---
 aiofiles==25.1.0
-python-docx==1.2.0
-pdfplumber==0.11.0
 
-# --- Utilitários ---
-python-dateutil==2.9.0.post0
+# --- Seam premium (open-core) ---
+# grpcio: cliente do contrato premium.v1 (usado só quando PREMIUM_ENABLED=true; com
+# premium desligado fica presente mas inativo — NullTransport). Não é IP.
+# pynacl: selagem de envelope (X25519 sealed box) do payload de cliente antes de sair
+# do core para o sidecar (custódia de dados). Os stubs do proto são gerados no build.
+grpcio==1.68.1
+pynacl==1.5.0

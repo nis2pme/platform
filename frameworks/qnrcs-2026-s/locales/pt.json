@@ -4,7 +4,7 @@
   "status": "draft",
   "framework": {
     "name": "QNRCS-2026-s",
-    "description": "Quadro Nacional de Referência para a Cibersegurança (QNRCS) — versão 2026.1, publicado pelo Centro Nacional de Cibersegurança (CNCS). Organiza medidas de cibersegurança em 6 domínios (Gerir, Identificar, Proteger, Detetar, Responder e Recuperar) com 4 níveis de maturidade: Básico, Substancial, Elevado e Suplementar."
+    "description": "Quadro Nacional de Referência para a Cibersegurança (QNRCS) — versão 2026, publicado no Regulamento 756/2026, de 22 de junho 2026"
   },
   "domains": {
     "GR": {
@@ -320,34 +320,26 @@
       "description": "A empresa identifica os serviços externos essenciais de que depende (ex: fornecedor de internet, serviço de email, plataforma na nuvem) e comunica esta informação às partes interessadas.",
       "maturity_levels": {
         "1": {
-          "description": "Identificar, documentar e comunicar os serviços críticos externos dos quais a entidade depende, respeitando o princípio da necessidade de saber.",
+          "description": "Identificar, documentar, classificar e priorizar os serviços críticos externos dos quais a entidade depende, comunicá-los às partes interessadas (necessidade de saber) e incluir esta identificação no processo de gestão dos riscos.",
           "indicators": [
             "Listar todos os serviços e fornecedores externos de que a empresa depende para funcionar (internet, email, alojamento web, software na nuvem, contabilidade, etc.).",
             "Identificar quais desses serviços são críticos (cuja falha impediria o normal funcionamento da empresa).",
-            "Documentar a lista com o nome do fornecedor, contacto de emergência e nível de criticidade.",
-            "Comunicar esta lista às partes interessadas internas relevantes, partilhando apenas o necessário."
+            "Documentar a lista com o nome do fornecedor, contacto de emergência, classificação e prioridade (criticidade).",
+            "Comunicar esta lista às partes interessadas internas relevantes, partilhando apenas o necessário.",
+            "Incluir a identificação dos serviços críticos externos no processo de gestão dos riscos da empresa."
           ],
           "evidence": [
-            "Folha Excel ou documento PDF com colunas: Serviço externo | Fornecedor | Contacto de emergência | Classificação (crítico/não crítico) | Data de identificação, assinado pelo responsável de TI.",
-            "Email ou ata de reunião a comprovar a comunicação desta lista às partes interessadas internas."
+            "Folha Excel ou documento PDF com colunas: Serviço externo | Fornecedor | Contacto de emergência | Classificação (crítico/não crítico) | Prioridade | Data de identificação, assinado pelo responsável de TI.",
+            "Email ou ata de reunião a comprovar a comunicação desta lista às partes interessadas internas.",
+            "Registo do processo de gestão dos riscos que contempla os serviços críticos externos dos quais a entidade depende."
           ],
           "tip": "Pense em todos os serviços que usa diariamente e pergunte-se: se este fornecedor parasse amanhã, conseguia trabalhar? Se não, é uma dependência crítica.",
-          "effort": "2–4 horas | Uma pessoa | Sem custo adicional"
+          "effort": "3–5 horas | Uma pessoa | Sem custo adicional"
         },
         "2": {
-          "description": "Classificar, priorizar e integrar os serviços críticos externos no processo de gestão de riscos, incluindo critérios de classificação e priorização.",
-          "indicators": [
-            "Definir critérios de classificação e priorização dos serviços críticos externos (ex: impacto na operação, tempo máximo tolerável de indisponibilidade, possibilidade de substituição).",
-            "Aplicar os critérios a cada serviço externo crítico e atribuir prioridades.",
-            "Integrar estes serviços no processo de gestão de riscos, garantindo que são incluídos nas avaliações de risco.",
-            "Registar e aprovar o resultado da classificação e integração."
-          ],
-          "evidence": [
-            "Documento PDF ou Excel com colunas: Serviço externo | Critérios de classificação | Prioridade | Integrado na gestão de riscos (sim/não), aprovado pela direção.",
-            "Print ou excerto do registo de gestão de riscos mostrando a inclusão dos serviços externos críticos."
-          ],
-          "tip": "Ao priorizar, considere também se existe um fornecedor alternativo disponível no mercado. Dependências sem alternativa são sempre de prioridade mais alta.",
-          "effort": "3–5 horas | Uma pessoa | Sem custo adicional"
+          "description": "Substancial",
+          "indicators": [],
+          "evidence": []
         },
         "3": {
           "description": "Elevado",
@@ -559,16 +551,6 @@
       "description": "A direção e administração da empresa demonstram que compreendem o seu papel na cibersegurança e disponibilizam os recursos necessários para a melhorar continuamente.",
       "maturity_levels": {
         "1": {
-          "description": "Básico",
-          "indicators": [],
-          "evidence": []
-        },
-        "2": {
-          "description": "Substancial",
-          "indicators": [],
-          "evidence": []
-        },
-        "3": {
           "description": "A direção e administração devem disponibilizar os recursos necessários para a melhoria contínua da cibersegurança, através de um plano aprovado com medidas, prazos e recursos.",
           "indicators": [
             "Elaborar um Plano de Melhoria Contínua de Cibersegurança, com medidas concretas a implementar (ex: formação anual, atualização de ferramentas, revisão de processos).",
@@ -583,6 +565,16 @@
           ],
           "tip": "O plano não precisa de ser ambicioso. Três a cinco melhorias por ano, com prazos e responsáveis definidos, já mostram compromisso real da direção.",
           "effort": "4–8 horas | Uma pessoa (com a direção) | Sem custo adicional"
+        },
+        "2": {
+          "description": "Substancial",
+          "indicators": [],
+          "evidence": []
+        },
+        "3": {
+          "description": "Elevado",
+          "indicators": [],
+          "evidence": []
         },
         "4": {
           "description": "Suplementar",
@@ -1026,25 +1018,24 @@
           "evidence": []
         },
         "2": {
-          "description": "Substancial",
-          "indicators": [],
-          "evidence": []
-        },
-        "3": {
-          "description": "Identificar, aprovar, gerir e manter atualizados os riscos de cibersegurança da cadeia de abastecimento, integrando-os nos processos transversais. Incluir nos contratos cláusulas que permitam a avaliação contínua dos fornecedores.",
+          "description": "Identificar, aprovar, gerir e manter atualizados, sempre que ocorram alterações, os riscos de cibersegurança associados à cadeia de abastecimento, integrando os processos da sua gestão nos processos transversais de cibersegurança e de gestão dos riscos da entidade.",
           "indicators": [
             "Identificar e registar os riscos de cibersegurança específicos da cadeia de abastecimento (ex: fornecedor com acesso VPN, serviço na nuvem com dados sensíveis).",
-            "Integrar esses riscos no registo global de riscos de cibersegurança da empresa.",
-            "Incluir nos contratos com fornecedores cláusulas que permitam avaliar a cibersegurança do fornecedor e corrigir falhas identificadas.",
-            "Submeter a identificação e integração dos riscos à aprovação da direção.",
+            "Integrar esses riscos no registo global de riscos de cibersegurança e nos processos transversais de gestão dos riscos da entidade.",
+            "Submeter a identificação, aprovação e gestão dos riscos à direção.",
             "Atualizar os riscos sempre que haja alterações na cadeia de abastecimento (novos fornecedores, cessação de contratos)."
           ],
           "evidence": [
-            "Registo de riscos (Excel ou PDF) que inclua uma secção ou separador dedicado aos riscos da cadeia de abastecimento, com colunas: Fornecedor | Risco identificado | Nível de risco | Tratamento | Data, aprovado pela direção.",
-            "Modelo de contrato ou cláusula contratual em PDF com disposições para: avaliação contínua da cibersegurança do fornecedor | correção de falhas identificadas."
+            "Registo de riscos (Excel ou PDF) com secção ou separador dedicado aos riscos da cadeia de abastecimento, com colunas: Fornecedor | Risco identificado | Nível de risco | Tratamento | Data, aprovado pela direção.",
+            "Registo documentado da identificação, aprovação, gestão e atualização dos riscos de cibersegurança associados à cadeia de abastecimento (ata ou histórico de atualizações)."
           ],
-          "tip": "Quando renovar contratos com fornecedores, aproveite para incluir as cláusulas de cibersegurança. É mais simples e natural do que tentar renegociar contratos em vigor.",
-          "effort": "6–10 horas | Uma pessoa | Sem custo adicional"
+          "tip": "Comece pelos fornecedores com acesso aos seus sistemas ou dados. São esses que representam maior risco e devem entrar primeiro no registo.",
+          "effort": "5–8 horas | Uma pessoa | Sem custo adicional"
+        },
+        "3": {
+          "description": "Elevado",
+          "indicators": [],
+          "evidence": []
         },
         "4": {
           "description": "Suplementar",
@@ -1492,28 +1483,28 @@
       }
     },
     "ID.GA-4": {
-      "title": "As redes e sistemas de informação externos são identificados e catalogados",
-      "description": "A empresa identifica e regista os sistemas e redes que opera fora das suas instalações (ex: servidores na nuvem, aplicações alojadas externamente, equipamentos em centros de dados de terceiros), sabendo onde estão e quem os gere.",
+      "title": "Os serviços prestados por fornecedores são inventariados",
+      "description": "A empresa mantém um inventário atualizado de todos os serviços externos prestados por fornecedores que utiliza e dos quais depende, sabendo quem é responsável pela gestão de cada serviço e das suas dependências.",
       "maturity_levels": {
         "1": {
-          "description": "Básico",
-          "indicators": [],
-          "evidence": []
-        },
-        "2": {
-          "description": "Incluir no inventário de ativos os sistemas de informação que se encontram fora das instalações físicas da entidade.",
+          "description": "Incluir no inventário de ativos os serviços prestados por fornecedores que a entidade utiliza e dos quais depende.",
           "indicators": [
-            "Identificar todos os sistemas de informação da empresa que estão alojados fora das suas instalações (servidores na nuvem, aplicações SaaS, bases de dados externas, equipamentos em data centers de terceiros).",
-            "Para cada sistema externo, registar: nome, tipo, localização (fornecedor/data center), responsável interno, responsável externo (fornecedor) e nível de criticidade.",
-            "Incluir esta informação no inventário de ativos já existente, de forma integrada.",
-            "Atualizar sempre que houver alterações (novos serviços, migrações, encerramentos)."
+            "Identificar todos os serviços prestados por fornecedores que a empresa utiliza e dos quais depende (ex: manutenção de TI, alojamento, software como serviço, contabilidade externa).",
+            "Para cada serviço, registar: fornecedor, tipo de serviço, responsável interno pela gestão e dependências associadas.",
+            "Incluir esta informação no inventário de ativos existente, de forma integrada.",
+            "Atualizar sempre que houver alterações (novos serviços, cessação de contratos)."
           ],
           "evidence": [
-            "Inventário de ativos (Excel ou sistema) com separador ou secção dedicada aos sistemas externos, com colunas: Nome do sistema | Tipo | Localização externa | Fornecedor | Responsável interno | Criticidade | Data de atualização, validado pelo responsável de TI.",
-            "Registo da última data de atualização do inventário de sistemas externos."
+            "Inventário de ativos (Excel ou sistema) que inclua os serviços prestados por fornecedores, com colunas: Serviço | Fornecedor | Responsável interno | Dependências | Data de atualização, validado pelo responsável de TI.",
+            "Registo da última data de atualização do inventário de serviços de fornecedores."
           ],
-          "tip": "Faça uma lista rápida de todos os serviços na nuvem que utiliza (Microsoft 365, Google Workspace, software de faturação, etc.). Muitas vezes, há serviços na nuvem esquecidos que já não são utilizados mas ainda estão ativos.",
+          "tip": "Reveja as faturas dos últimos meses: cada fornecedor recorrente de um serviço de TI ou digital é candidato a entrar neste inventário.",
           "effort": "2–4 horas | Uma pessoa | Sem custo adicional"
+        },
+        "2": {
+          "description": "Substancial",
+          "indicators": [],
+          "evidence": []
         },
         "3": {
           "description": "Elevado",
@@ -1573,6 +1564,11 @@
           "evidence": []
         },
         "2": {
+          "description": "Substancial",
+          "indicators": [],
+          "evidence": []
+        },
+        "3": {
           "description": "Identificar e classificar os dados e respetivos metadados tratados pela entidade, de acordo com a Política de Classificação e Gestão de Dados.",
           "indicators": [
             "Listar os tipos de dados que a empresa trata (dados pessoais, dados financeiros, dados comerciais, dados técnicos, etc.).",
@@ -1587,11 +1583,6 @@
           ],
           "tip": "Se a empresa já fez o exercício do RGPD (registo de atividades de tratamento de dados pessoais), parte do trabalho está feito. Estenda esse registo aos outros tipos de dados.",
           "effort": "4–8 horas | Uma pessoa | Sem custo adicional"
-        },
-        "3": {
-          "description": "Elevado",
-          "indicators": [],
-          "evidence": []
         },
         "4": {
           "description": "Suplementar",
@@ -1638,21 +1629,9 @@
           "effort": "8–12 horas | Uma pessoa | Sem custo adicional"
         },
         "3": {
-          "description": "Monitorizar equipamentos de manutenção de terceiros, inspecionar dispositivos de manutenção, garantir segurança na alienação de ativos e verificar controlos de segurança após manutenções.",
-          "indicators": [
-            "Monitorizar a utilização de equipamentos de manutenção de terceiros nos ativos da empresa (registo de quem acedeu, quando e a que sistemas).",
-            "Inspecionar e proteger com soluções de deteção de código malicioso os equipamentos de manutenção e dispositivos de armazenamento de terceiros antes de os ligar aos sistemas.",
-            "Incluir na Política de Gestão do Ciclo de Vida de Ativos medidas para a alienação segura de ativos (apagar dados de acordo com a classificação da informação).",
-            "Após cada manutenção, atualização ou reparação, verificar que os controlos de segurança continuam ativos e funcionais.",
-            "Registar os resultados das verificações e tomar medidas corretivas se necessário."
-          ],
-          "evidence": [
-            "Registo de utilização de equipamentos de manutenção de terceiros (Excel ou PDF) com colunas: Data | Fornecedor | Técnico | Ativo acedido | Equipamento utilizado | Inspeção efetuada (sim/não).",
-            "Excerto da Política de Gestão do Ciclo de Vida de Ativos com medidas para a alienação segura, aprovado pela direção.",
-            "Registo de verificação de controlos de segurança pós-manutenção (Excel ou PDF) com: Ativo | Manutenção efetuada | Controlos verificados | Resultado | Medidas corretivas (se aplicável)."
-          ],
-          "tip": "Antes de deitar fora um computador ou disco, utilize uma ferramenta de apagamento seguro (como DBAN) para garantir que nenhum dado é recuperável. Formatar não é suficiente.",
-          "effort": "2–4 horas por manutenção/alienação | Uma pessoa de TI | Custo das ferramentas (maioria gratuita)"
+          "description": "Elevado",
+          "indicators": [],
+          "evidence": []
         },
         "4": {
           "description": "Suplementar",
@@ -3191,11 +3170,6 @@
           "evidence": []
         },
         "2": {
-          "description": "Substancial",
-          "indicators": [],
-          "evidence": []
-        },
-        "3": {
           "description": "Os ambientes de desenvolvimento e teste devem estar isolados do ambiente de produção, tanto em termos de acessos como de dados.",
           "indicators": [
             "Garantir que os ambientes de desenvolvimento e teste estão em servidores ou redes separadas do ambiente de produção.",
@@ -3210,6 +3184,11 @@
           ],
           "tip": "Mesmo numa empresa pequena, pode separar os ambientes usando máquinas virtuais. Nunca use o servidor de produção para fazer testes, pois um erro pode afetar todos os utilizadores.",
           "effort": "4–8 horas | Uma pessoa de TI | Custo variável (máquina virtual ou servidor adicional)"
+        },
+        "3": {
+          "description": "Elevado",
+          "indicators": [],
+          "evidence": []
         },
         "4": {
           "description": "Suplementar",
@@ -3228,21 +3207,9 @@
           "evidence": []
         },
         "2": {
-          "description": "Implementar sistemas de emergência e segurança contra incêndio. Monitorizar as condições ambientais que possam afetar os sistemas críticos. Proteger as infraestruturas contra alterações elétricas.",
-          "indicators": [
-            "Instalar sistemas de deteção e combate a incêndio na sala de servidores (extintores adequados para equipamento elétrico, detetores de fumo).",
-            "Instalar UPS (fonte de alimentação ininterrupta) nos sistemas críticos para proteger contra picos de energia e cortes de eletricidade.",
-            "Instalar sensores de temperatura e humidade na sala de servidores e configurar alertas quando os valores saírem dos limites aceitáveis.",
-            "Documentar os procedimentos de emergência para cada tipo de ameaça (incêndio, inundação, falha de energia)."
-          ],
-          "evidence": [
-            "Fotografia ou print de ecrã dos sistemas de deteção de incêndio e dos extintores na sala de servidores.",
-            "Print de ecrã ou fotografia das UPS instaladas nos sistemas críticos.",
-            "Print de ecrã dos sensores de temperatura/humidade e dos alertas configurados.",
-            "Documento PDF com os procedimentos de emergência, validado pelo responsável."
-          ],
-          "tip": "Uma UPS básica para proteger um servidor custa entre 100€ e 300€ e dá tempo suficiente para encerrar o sistema de forma controlada em caso de falha de energia. É um investimento fundamental.",
-          "effort": "4–8 horas | Uma pessoa | Custo variável (UPS, sensores, extintores)"
+          "description": "Substancial",
+          "indicators": [],
+          "evidence": []
         },
         "3": {
           "description": "Implementar deteção de incêndios com notificação automática. Testar periodicamente a eficácia dos controlos de segurança aplicados aos ambientes físicos.",
@@ -4488,21 +4455,6 @@
       "description": "Antes de usar uma cópia de segurança ou outro recurso para restaurar sistemas após um incidente, a organização verifica que esses recursos estão íntegros, não estão corrompidos e não contêm software malicioso.",
       "maturity_levels": {
         "1": {
-          "description": "Básico",
-          "indicators": [],
-          "evidence": []
-        },
-        "2": {
-          "description": "Substancial",
-          "indicators": [],
-          "evidence": []
-        },
-        "3": {
-          "description": "Elevado",
-          "indicators": [],
-          "evidence": []
-        },
-        "4": {
           "description": "Antes de utilizar cópias de segurança ou outros ativos de restauro, a sua integridade e autenticidade devem ser verificadas, para evitar reintroduzir problemas nos sistemas.",
           "indicators": [
             "Antes de utilizar uma cópia de segurança para restauro, verificar se está íntegra (não está corrompida, não contém software malicioso, corresponde à versão esperada).",
@@ -4516,6 +4468,21 @@
           ],
           "tip": "Não confie cegamente nas cópias de segurança. Um backup infetado com o mesmo software malicioso que causou o incidente vai reintroduzir o problema. Verifique sempre antes de restaurar.",
           "effort": "1–2 horas por verificação | Uma pessoa | Sem custo adicional"
+        },
+        "2": {
+          "description": "Substancial",
+          "indicators": [],
+          "evidence": []
+        },
+        "3": {
+          "description": "Elevado",
+          "indicators": [],
+          "evidence": []
+        },
+        "4": {
+          "description": "Suplementar",
+          "indicators": [],
+          "evidence": []
         }
       }
     },

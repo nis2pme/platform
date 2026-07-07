@@ -29,12 +29,54 @@ NGINX_CONFIG_DIR = Path(os.environ.get("NGINX_CONFIG_DIR", "/app/nginx_config"))
 # reinícios não sobrescrevem a configuração existente.
 _TLS_INIT_MARKER = Path("/app/data/.tls_initialized")
 
+def _flag_ativa(nome: str, default: bool = False) -> bool:
+    """Lê uma flag booleana do ambiente (mesma convenção do pydantic-settings)."""
+    valor = os.environ.get(nome)
+    if valor is None:
+        return default
+    return valor.strip().lower() in ("1", "true", "yes", "on")
+
+
+# Confiar no CF-Connecting-IP para o real_ip/auditoria SÓ quando a app está atrás de um Cloudflare
+# Tunnel/proxy de confiança que injeta o header. É a MESMA flag que o backend usa para resolver o IP
+# do cliente — o nginx limita-se a APLICAR a decisão na única camada onde o IP do peer ainda existe;
+# quem decide é o backend. Em on-prem direto (default False) não se emite real_ip: senão um cliente
+# forjava o CF-Connecting-IP e o nginx envenenava o X-Real-IP que o backend consome (CWE-348).
+_TRUST_CF = _flag_ativa("TRUST_CLOUDFLARE_HEADERS", False)
+
+# REAL_IP_FROM: a fonte de confiança quando _TRUST_CF. O ideal é o IP EXATO do gateway da bridge do
+# frontend (ex. 172.21.0.1/32) — só o docker-proxy apresenta esse IP. O default é largo (toda a gama
+# de bridges) para não quebrar instalações com sub-redes diferentes; aperta-se via env REAL_IP_FROM.
+_REAL_IP_FROM = os.environ.get("REAL_IP_FROM", "172.16.0.0/12")
+_REAL_IP = (
+    f"""\
+    set_real_ip_from {_REAL_IP_FROM};
+    real_ip_header    CF-Connecting-IP;
+    real_ip_recursive on;
+"""
+    if _TRUST_CF
+    else ""
+)
+
+# Auditoria de IP nos logs do nginx: $realip_remote_addr = peer TCP real (deve ser o gateway da
+# bridge); $remote_addr = após real_ip (= CF-Connecting-IP). Sem CF o cf= ficaria sempre vazio e o
+# access_log não pode referenciar um log_format inexistente — por isso os dois andam juntos na flag.
+_LOG_FORMAT = (
+    """\
+log_format cf_audit '$realip_remote_addr -> $remote_addr cf=$http_cf_connecting_ip '
+                    '"$request" $status xff="$http_x_forwarded_for" ua="$http_user_agent"';
+"""
+    if _TRUST_CF
+    else ""
+)
+_ACCESS_LOG = "    access_log /var/log/nginx/access.log cf_audit;" if _TRUST_CF else ""
+
 # Cabeçalhos de segurança comuns (sem HSTS — HSTS só no modo custom)
 _SEC_HEADERS = """\
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'" always;"""
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'" always;"""
 
 # ---------------------------------------------------------------------------
 # Templates nginx
@@ -44,6 +86,7 @@ _SEC_HEADERS = """\
 _NGINX_HTTP = f"""\
 # NIS2PME — Nginx config (HTTP)
 # Gerado automaticamente. Nao editar manualmente.
+{_LOG_FORMAT}
 server {{
     listen 80;
     server_name _;
@@ -54,10 +97,16 @@ server {{
     gzip_types text/plain text/css application/json application/javascript text/xml application/xml text/javascript;
     gzip_min_length 1000;
 
+{_REAL_IP}
+{_ACCESS_LOG}
 {_SEC_HEADERS}
 
     location /api/ {{
-        proxy_pass         http://backend:8000;
+        # Re-resolver o upstream em runtime (DNS embebido do Docker) — senão o
+        # nginx cacheia o IP no arranque e parte se o backend mudar de IP.
+        resolver 127.0.0.11 valid=10s ipv6=off;
+        set $nis2pme_backend backend;
+        proxy_pass         http://$nis2pme_backend:8000;
         proxy_set_header   Host              $host;
         proxy_set_header   X-Real-IP         $remote_addr;
         proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
@@ -88,6 +137,7 @@ server {{
 _NGINX_PROXY = f"""\
 # NIS2PME — Nginx config (proxy / TLS a montante)
 # Gerado automaticamente. Nao editar manualmente.
+{_LOG_FORMAT}
 map $http_x_forwarded_proto $nis2pme_proto {{
     default $scheme;
     "~.+"   $http_x_forwarded_proto;
@@ -103,10 +153,16 @@ server {{
     gzip_types text/plain text/css application/json application/javascript text/xml application/xml text/javascript;
     gzip_min_length 1000;
 
+{_REAL_IP}
+{_ACCESS_LOG}
 {_SEC_HEADERS}
 
     location /api/ {{
-        proxy_pass         http://backend:8000;
+        # Re-resolver o upstream em runtime (DNS embebido do Docker) — senão o
+        # nginx cacheia o IP no arranque e parte se o backend mudar de IP.
+        resolver 127.0.0.11 valid=10s ipv6=off;
+        set $nis2pme_backend backend;
+        proxy_pass         http://$nis2pme_backend:8000;
         proxy_set_header   Host              $host;
         proxy_set_header   X-Real-IP         $remote_addr;
         proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
@@ -133,7 +189,7 @@ server {{
 _NGINX_HTTPS_TPL = """\
 # NIS2PME — Nginx config (HTTPS)
 # Gerado automaticamente. Nao editar manualmente.
-
+__LOG_FORMAT__
 # Redirect HTTP -> HTTPS
 server {
     listen 80;
@@ -159,14 +215,20 @@ server {
     gzip_types text/plain text/css application/json application/javascript text/xml application/xml text/javascript;
     gzip_min_length 1000;
 
+__REAL_IP__
+__ACCESS_LOG__
 __HSTS__
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'" always;
 
     location /api/ {
-        proxy_pass         http://backend:8000;
+        # Re-resolver o upstream em runtime (DNS embebido do Docker) — senão o
+        # nginx cacheia o IP no arranque e parte se o backend mudar de IP.
+        resolver 127.0.0.11 valid=10s ipv6=off;
+        set $nis2pme_backend backend;
+        proxy_pass         http://$nis2pme_backend:8000;
         proxy_set_header   Host              $host;
         proxy_set_header   X-Real-IP         $remote_addr;
         proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
@@ -194,7 +256,10 @@ _HSTS_LINE = '    add_header Strict-Transport-Security "max-age=31536000; includ
 
 def _config_https(com_hsts: bool) -> str:
     """Constrói a config HTTPS, com ou sem cabeçalho HSTS."""
-    return _NGINX_HTTPS_TPL.replace("__HSTS__", _HSTS_LINE if com_hsts else "")
+    cfg = _NGINX_HTTPS_TPL.replace("__HSTS__", _HSTS_LINE if com_hsts else "")
+    cfg = cfg.replace("__LOG_FORMAT__", _LOG_FORMAT)
+    cfg = cfg.replace("__ACCESS_LOG__", _ACCESS_LOG)
+    return cfg.replace("__REAL_IP__", _REAL_IP)
 
 
 # ---------------------------------------------------------------------------

@@ -9,6 +9,34 @@ from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _validar_chave_fernet(v: str, nome: str) -> str:
+    """
+    Valida que `v` é uma chave Fernet (base64 url-safe, 32 bytes) ou vazio.
+
+    Vazio é aceite (a chave é auto-gerada no entrypoint ou a cifra fica desativada).
+    Rejeita o valor de placeholder e formatos inválidos com uma mensagem que indica
+    como gerar uma chave correta.
+    """
+    import base64
+
+    if not v:
+        return v
+    if v.startswith("CHANGE_ME"):
+        raise ValueError(
+            f"{nome} não pode ser o valor padrão. "
+            "Gerar com: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+        )
+    try:
+        if len(base64.urlsafe_b64decode(v)) != 32:
+            raise ValueError("Comprimento incorreto")
+    except Exception:
+        raise ValueError(
+            f"{nome} inválida — deve ser uma chave Fernet (base64 url-safe, 32 bytes). "
+            "Gerar com: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+        )
+    return v
+
+
 class Settings(BaseSettings):
     """
     Todas as configurações são lidas de variáveis de ambiente (ou .env).
@@ -23,6 +51,10 @@ class Settings(BaseSettings):
     # Em produção deve ser False mesmo que DEBUG fique True acidentalmente (CWE-215).
     ENABLE_API_DOCS: bool = False
     DEPLOYMENT_MODE: str = "onprem"  # "saas" | "onprem"
+    # Distingue o SaaS de avaliação (trial) do SaaS pago. Só relevante quando
+    # DEPLOYMENT_MODE=saas; seleciona a variante "saas-trial" dos textos legais
+    # (conta de teste, dados eliminados aos 14 dias, não enviar PII).
+    IS_TRIAL: bool = False
     APP_URL: str = "http://localhost:5173"
 
     # --- Proxy / rede ---
@@ -32,6 +64,19 @@ class Settings(BaseSettings):
     # ficar False — caso contrário qualquer cliente forja o IP nos audit logs e
     # contorna o rate limiting (CWE-348). On-prem usa o X-Real-IP definido pelo Nginx.
     TRUST_CLOUDFLARE_HEADERS: bool = False
+
+    # --- SaaS / trial ---
+    # Token interno partilhado com a borda de signup (saas-trial). Em modo SaaS o
+    # registo público só é aceite quando acompanhado deste token: o core não é
+    # exposto diretamente à internet — a borda é a única que invoca o /register.
+    # Vazio em on-prem (lá o registo público está desativado).
+    SAAS_TRIAL_INTERNAL_TOKEN: str = Field(default="", repr=False)
+
+    # Token de gestão privilegiada de tenants (mecanismo, não política): autoriza
+    # suspender/reativar uma empresa via API interna. NUNCA pela borda de signup
+    # (separação de privilégios face ao SAAS_TRIAL_INTERNAL_TOKEN, que só cria).
+    # Vazio → o router interno nem é montado (e só é montado em DEPLOYMENT_MODE=saas).
+    CORE_SUSPEND_TOKEN: str = Field(default="", repr=False)
 
     # --- TLS (apenas on-prem) ---
     # Em saas o TLS é sempre tratado a montante (Cloudflare) e estas variáveis são
@@ -59,6 +104,25 @@ class Settings(BaseSettings):
     # Desligável (VERIFY_UPDATES=false).
     VERIFY_UPDATES: bool = True
     UPDATE_CHECK_URL: str = "https://update.nis2pme.pt/v1/check-updates"
+
+    # --- Premium (open-core ↔ módulos premium privados) ---
+    # O core fala com o sidecar premium via gRPC (contrato premium.v1). DESLIGADO
+    # por defeito: o open-core funciona sem qualquer sidecar. Ligar requer o
+    # sidecar a correr e PREMIUM_SIDECAR_ADDR definido.
+    PREMIUM_ENABLED: bool = False
+    PREMIUM_SIDECAR_ADDR: str = ""           # ex.: "premium-sidecar:50051"
+    PREMIUM_ENTITLEMENT_CACHE_TTL: int = 60  # segundos — cache curta
+
+    # --- Selagem de envelope (custódia de dados premium) ---
+    # Cifra-envelope X25519 (sealed box): chave PÚBLICA do gateway, em base64. O core
+    # sela com ela o payload de cliente antes de o entregar ao sidecar; só o worker
+    # (chave privada) decifra. KID etiqueta a chave (rotação). Fail-closed: sem chave
+    # o core RECUSA selar — exceto se DEV_PLAINTEXT=true (só dev). O ciclo de vida do
+    # job da IA (admissão/submissão/polling/estado) é do sidecar, não do core.
+    PREMIUM_ENVELOPE_PUBKEY: str = ""
+    PREMIUM_ENVELOPE_KID: str = ""
+    PREMIUM_ENVELOPE_DEV_PLAINTEXT: bool = False
+    PREMIUM_EVIDENCE_MAX_BYTES: int = 52_428_800   # 50 MB — teto do payload de evidências
 
     # --- Base de dados ---
     DATABASE_URL: str
@@ -109,6 +173,10 @@ class Settings(BaseSettings):
     # --- Uploads de evidências ---
     UPLOADS_DIR: str = "uploads"                        # directório raiz (relativo ao cwd)
     MAX_UPLOAD_SIZE_MB: int = 10                        # tamanho máximo por ficheiro
+    # Quota total de armazenamento por empresa (0 = ilimitado). No SaaS pode ser
+    # sobreposta por-plano via entitlement (limits.total_mb); no saas-trial fixa-se
+    # aqui (ex.: 50). Imposta no upload de evidências (413 se excedida).
+    EVIDENCE_QUOTA_MB: int = 0
     ALLOWED_UPLOAD_MIME_TYPES: list[str] = [
         "application/pdf",
         "image/png",
@@ -136,25 +204,11 @@ class Settings(BaseSettings):
         return v
 
     # --- Email ---
-    # Desativar email completamente (dev local sem SMTP/Brevo).
+    # Desativar email completamente (dev local sem SMTP/Resend).
     # Quando False: sem validação de credenciais no arranque, sem envio — o link de reset é apenas logado.
     EMAIL_ENABLED: bool = False
-    # Provedor: "smtp" (default) ou "brevo"
+    # Provedor: "smtp" (default, on-prem) ou "resend" (SaaS)
     EMAIL_PROVIDER: str = "smtp"
-
-    # Brevo API (usado quando EMAIL_PROVIDER="brevo")
-    BREVO_API_KEY: str = Field(default="", repr=False)  # repr=False impede exposição em logs (CWE-532)
-
-    @field_validator("BREVO_API_KEY", mode="before")
-    @classmethod
-    def normalizar_brevo_api_key(cls, v: str) -> str:
-        """
-        Remove espaços/newlines acidentais na chave — causa comum de 401.
-        As chaves Brevo começam sempre com 'xkeysib-'.
-        """
-        if isinstance(v, str):
-            v = v.strip()
-        return v
 
     # SMTP (usado quando EMAIL_PROVIDER="smtp")
     SMTP_HOST: str = ""
@@ -165,12 +219,26 @@ class Settings(BaseSettings):
     SMTP_FROM_NAME: str = "NIS2PME"
     SMTP_TLS: bool = True
 
+    # Resend API (usado quando EMAIL_PROVIDER="resend"). Partilha a MESMA config do funil
+    # saas-trial (mesma chave/remetente/URL) — um só serviço de email para toda a plataforma.
+    RESEND_API_KEY: str = Field(default="", repr=False)  # repr=False impede exposição em logs (CWE-532)
+    RESEND_FROM: str = "NIS2PME <noreply@nis2pme.pt>"     # remetente verificado no Resend
+    RESEND_API_URL: str = "https://api.resend.com/emails"
+
+    @field_validator("RESEND_API_KEY", mode="before")
+    @classmethod
+    def normalizar_resend_api_key(cls, v: str) -> str:
+        """Remove espaços/newlines acidentais na chave (causa comum de 401)."""
+        if isinstance(v, str):
+            v = v.strip()
+        return v
+
     @field_validator("EMAIL_PROVIDER")
     @classmethod
     def validar_email_provider(cls, v: str) -> str:
         """Garante que EMAIL_PROVIDER é um dos valores suportados."""
-        if v not in ("smtp", "brevo"):
-            raise ValueError("EMAIL_PROVIDER deve ser 'smtp' ou 'brevo'")
+        if v not in ("smtp", "resend"):
+            raise ValueError("EMAIL_PROVIDER deve ser 'smtp' ou 'resend'")
         return v
 
     @model_validator(mode="after")
@@ -183,28 +251,21 @@ class Settings(BaseSettings):
         """
         if not self.EMAIL_ENABLED:
             return self
-        if self.EMAIL_PROVIDER == "brevo":
-            if not self.BREVO_API_KEY:
-                raise ValueError(
-                    "EMAIL_PROVIDER=brevo mas BREVO_API_KEY está vazia. "
-                    "Configure BREVO_API_KEY no ficheiro .env."
-                )
-            if not self.BREVO_API_KEY.startswith("xkeysib-"):
-                raise ValueError(
-                    "BREVO_API_KEY com formato inválido — deve começar com 'xkeysib-'. "
-                    "Confirme que copiou a chave de API Transacional em "
-                    "https://app.brevo.com/settings/keys/api (não a chave de campanhas)."
-                )
+        if self.EMAIL_PROVIDER == "resend" and not self.RESEND_API_KEY:
+            raise ValueError(
+                "EMAIL_PROVIDER=resend mas RESEND_API_KEY está vazia. "
+                "Configure RESEND_API_KEY no ficheiro .env."
+            )
         if self.EMAIL_PROVIDER == "smtp" and not self.SMTP_HOST:
             raise ValueError(
                 "EMAIL_PROVIDER=smtp mas SMTP_HOST está vazio. "
-                "Configure SMTP_HOST no ficheiro .env (ou mude EMAIL_PROVIDER=brevo)."
+                "Configure SMTP_HOST no ficheiro .env (ou mude EMAIL_PROVIDER=resend)."
             )
         # APP_URL com localhost gera links de email inacessíveis em staging/prod.
         # Só é aceitável em desenvolvimento local (EMAIL_PROVIDER=smtp sem host real).
-        if "localhost" in self.APP_URL and self.EMAIL_PROVIDER == "brevo":
+        if "localhost" in self.APP_URL and self.EMAIL_PROVIDER == "resend":
             raise ValueError(
-                f"APP_URL='{self.APP_URL}' contém 'localhost' mas EMAIL_PROVIDER=brevo. "
+                f"APP_URL='{self.APP_URL}' contém 'localhost' mas EMAIL_PROVIDER={self.EMAIL_PROVIDER}. "
                 "Os links de reset de password enviados por email serão inacessíveis. "
                 "Configure APP_URL com o domínio público (ex: https://nis2pme.pt) no .env."
             )
@@ -274,73 +335,19 @@ class Settings(BaseSettings):
     @classmethod
     def validar_totp_encryption_key(cls, v: str) -> str:
         """Valida que TOTP_ENCRYPTION_KEY é uma chave Fernet válida. Vazio é aceite (auto-gerado)."""
-        import base64
-
-        if not v:
-            return v  # auto-gerado no entrypoint
-        if v.startswith("CHANGE_ME"):
-            raise ValueError(
-                "TOTP_ENCRYPTION_KEY não pode ser o valor padrão. "
-                "Gerar com: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
-            )
-        try:
-            decoded = base64.urlsafe_b64decode(v)
-            if len(decoded) != 32:
-                raise ValueError("Comprimento incorrecto")
-        except Exception:
-            raise ValueError(
-                "TOTP_ENCRYPTION_KEY inválida — deve ser uma chave Fernet (base64 url-safe, 32 bytes). "
-                "Gerar com: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
-            )
-        return v
+        return _validar_chave_fernet(v, "TOTP_ENCRYPTION_KEY")
 
     @field_validator("EVIDENCE_ENCRYPTION_KEY")
     @classmethod
     def validar_evidence_encryption_key(cls, v: str) -> str:
         """Valida formato da chave Fernet de cifra de evidências (se definida)."""
-        import base64
-
-        if not v:
-            return v  # Vazio é aceite (cifra desativada)
-        if v.startswith("CHANGE_ME"):
-            raise ValueError(
-                "EVIDENCE_ENCRYPTION_KEY não pode ser o valor padrão. "
-                "Gerar com: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
-            )
-        try:
-            decoded = base64.urlsafe_b64decode(v)
-            if len(decoded) != 32:
-                raise ValueError("Comprimento incorreto")
-        except Exception:
-            raise ValueError(
-                "EVIDENCE_ENCRYPTION_KEY inválida — deve ser uma chave Fernet (base64 url-safe, 32 bytes). "
-                "Gerar com: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
-            )
-        return v
+        return _validar_chave_fernet(v, "EVIDENCE_ENCRYPTION_KEY")
 
     @field_validator("PII_ENCRYPTION_KEY")
     @classmethod
     def validar_pii_encryption_key(cls, v: str) -> str:
         """Valida formato da chave Fernet de cifra de campos PII (se definida)."""
-        import base64
-
-        if not v:
-            return v  # Vazio é aceite (sem cifra PII — apenas em desenvolvimento)
-        if v.startswith("CHANGE_ME"):
-            raise ValueError(
-                "PII_ENCRYPTION_KEY não pode ser o valor padrão. "
-                "Gerar com: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
-            )
-        try:
-            decoded = base64.urlsafe_b64decode(v)
-            if len(decoded) != 32:
-                raise ValueError("Comprimento incorreto")
-        except Exception:
-            raise ValueError(
-                "PII_ENCRYPTION_KEY inválida — deve ser uma chave Fernet (base64 url-safe, 32 bytes). "
-                "Gerar com: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
-            )
-        return v
+        return _validar_chave_fernet(v, "PII_ENCRYPTION_KEY")
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -1,7 +1,7 @@
 {
   "registry_id": "qnrcs-2026-s",
   "version": "2026",
-  "version_date": "2026-04-13",
+  "version_date": "2026-06-07",
   "framework_type": "control_based",
   "display_mode": "compliance",
   "maturity_scale": {
@@ -34,7 +34,7 @@
   ],
   "author": "Daniel Barreiros",
   "repository_url": "https://github.com/nis2pme/platform",
-  "notes": "Framework QNRCS 2026.2. Thresholds corrigidos: minimum_level derivado dos niveis de SR reais (formula: max(SR_level para SR_level <= nivel_perfil)). Basico: 39 controlos (minimum_level=1). Substancial: 72 controlos cumulativos com minimum_level correto. Elevado: 91 controlos cumulativos com minimum_level correto. 16 controlos suplementares (nivel 4, a pedido do CNCS) excluidos de todos os perfis. auto_assign_for e category atualizados para terminologia QNRCS: basico/substancial/elevado.",
+  "notes": "Framework QNRCS 2026, baseado no Regulamento 756/2026, de 22 de junho 2026.",
   "profiles": [
     {
       "code": "qnrcs-basico",
@@ -43,6 +43,31 @@
       "compliance_mode": "maturity",
       "sector": null,
       "thresholds": [
+        {
+          "control_code": "DE.AE-2",
+          "minimum_level": 1,
+          "mandatory": true
+        },
+        {
+          "control_code": "DE.AE-6",
+          "minimum_level": 1,
+          "mandatory": true
+        },
+        {
+          "control_code": "DE.MC-1",
+          "minimum_level": 1,
+          "mandatory": true
+        },
+        {
+          "control_code": "DE.MC-4",
+          "minimum_level": 1,
+          "mandatory": true
+        },
+        {
+          "control_code": "DE.MC-5",
+          "minimum_level": 1,
+          "mandatory": true
+        },
         {
           "control_code": "GR.CA-7",
           "minimum_level": 1,
@@ -65,6 +90,11 @@
         },
         {
           "control_code": "GR.CO-6",
+          "minimum_level": 1,
+          "mandatory": true
+        },
+        {
+          "control_code": "GR.FR-1",
           "minimum_level": 1,
           "mandatory": true
         },
@@ -120,6 +150,11 @@
         },
         {
           "control_code": "ID.GA-2",
+          "minimum_level": 1,
+          "mandatory": true
+        },
+        {
+          "control_code": "ID.GA-4",
           "minimum_level": 1,
           "mandatory": true
         },
@@ -199,27 +234,12 @@
           "mandatory": true
         },
         {
-          "control_code": "DE.AE-2",
+          "control_code": "RC.PR-1",
           "minimum_level": 1,
           "mandatory": true
         },
         {
-          "control_code": "DE.AE-6",
-          "minimum_level": 1,
-          "mandatory": true
-        },
-        {
-          "control_code": "DE.MC-1",
-          "minimum_level": 1,
-          "mandatory": true
-        },
-        {
-          "control_code": "DE.MC-4",
-          "minimum_level": 1,
-          "mandatory": true
-        },
-        {
-          "control_code": "DE.MC-5",
+          "control_code": "RC.PR-3",
           "minimum_level": 1,
           "mandatory": true
         },
@@ -232,11 +252,6 @@
           "control_code": "RS.NC-1",
           "minimum_level": 1,
           "mandatory": true
-        },
-        {
-          "control_code": "RC.PR-1",
-          "minimum_level": 1,
-          "mandatory": true
         }
       ]
     },
@@ -247,6 +262,61 @@
       "compliance_mode": "maturity",
       "sector": null,
       "thresholds": [
+        {
+          "control_code": "DE.AE-1",
+          "minimum_level": 2,
+          "mandatory": true
+        },
+        {
+          "control_code": "DE.AE-2",
+          "minimum_level": 1,
+          "mandatory": true
+        },
+        {
+          "control_code": "DE.AE-4",
+          "minimum_level": 2,
+          "mandatory": true
+        },
+        {
+          "control_code": "DE.AE-6",
+          "minimum_level": 1,
+          "mandatory": true
+        },
+        {
+          "control_code": "DE.MC-1",
+          "minimum_level": 2,
+          "mandatory": true
+        },
+        {
+          "control_code": "DE.MC-2",
+          "minimum_level": 2,
+          "mandatory": true
+        },
+        {
+          "control_code": "DE.MC-4",
+          "minimum_level": 1,
+          "mandatory": true
+        },
+        {
+          "control_code": "DE.MC-5",
+          "minimum_level": 2,
+          "mandatory": true
+        },
+        {
+          "control_code": "DE.MC-6",
+          "minimum_level": 2,
+          "mandatory": true
+        },
+        {
+          "control_code": "DE.MC-7",
+          "minimum_level": 2,
+          "mandatory": true
+        },
+        {
+          "control_code": "GR.CA-3",
+          "minimum_level": 2,
+          "mandatory": true
+        },
         {
           "control_code": "GR.CA-5",
           "minimum_level": 2,
@@ -284,7 +354,12 @@
         },
         {
           "control_code": "GR.CO-6",
-          "minimum_level": 2,
+          "minimum_level": 1,
+          "mandatory": true
+        },
+        {
+          "control_code": "GR.FR-1",
+          "minimum_level": 1,
           "mandatory": true
         },
         {
@@ -384,17 +459,12 @@
         },
         {
           "control_code": "ID.GA-4",
-          "minimum_level": 2,
+          "minimum_level": 1,
           "mandatory": true
         },
         {
           "control_code": "ID.GA-5",
           "minimum_level": 1,
-          "mandatory": true
-        },
-        {
-          "control_code": "ID.GA-6",
-          "minimum_level": 2,
           "mandatory": true
         },
         {
@@ -458,7 +528,7 @@
           "mandatory": true
         },
         {
-          "control_code": "PR.RI-3",
+          "control_code": "PR.RI-2",
           "minimum_level": 2,
           "mandatory": true
         },
@@ -503,52 +573,32 @@
           "mandatory": true
         },
         {
-          "control_code": "DE.AE-1",
+          "control_code": "RC.CO-1",
           "minimum_level": 2,
           "mandatory": true
         },
         {
-          "control_code": "DE.AE-2",
+          "control_code": "RC.CO-2",
+          "minimum_level": 2,
+          "mandatory": true
+        },
+        {
+          "control_code": "RC.PR-1",
           "minimum_level": 1,
           "mandatory": true
         },
         {
-          "control_code": "DE.AE-4",
-          "minimum_level": 2,
-          "mandatory": true
-        },
-        {
-          "control_code": "DE.AE-6",
+          "control_code": "RC.PR-3",
           "minimum_level": 1,
           "mandatory": true
         },
         {
-          "control_code": "DE.MC-1",
+          "control_code": "RC.PR-5",
           "minimum_level": 2,
           "mandatory": true
         },
         {
-          "control_code": "DE.MC-2",
-          "minimum_level": 2,
-          "mandatory": true
-        },
-        {
-          "control_code": "DE.MC-4",
-          "minimum_level": 1,
-          "mandatory": true
-        },
-        {
-          "control_code": "DE.MC-5",
-          "minimum_level": 2,
-          "mandatory": true
-        },
-        {
-          "control_code": "DE.MC-6",
-          "minimum_level": 2,
-          "mandatory": true
-        },
-        {
-          "control_code": "DE.MC-7",
+          "control_code": "RC.PR-6",
           "minimum_level": 2,
           "mandatory": true
         },
@@ -581,31 +631,6 @@
           "control_code": "RS.NC-1",
           "minimum_level": 2,
           "mandatory": true
-        },
-        {
-          "control_code": "RC.CO-1",
-          "minimum_level": 2,
-          "mandatory": true
-        },
-        {
-          "control_code": "RC.CO-2",
-          "minimum_level": 2,
-          "mandatory": true
-        },
-        {
-          "control_code": "RC.PR-1",
-          "minimum_level": 1,
-          "mandatory": true
-        },
-        {
-          "control_code": "RC.PR-5",
-          "minimum_level": 2,
-          "mandatory": true
-        },
-        {
-          "control_code": "RC.PR-6",
-          "minimum_level": 2,
-          "mandatory": true
         }
       ]
     },
@@ -617,13 +642,68 @@
       "sector": null,
       "thresholds": [
         {
+          "control_code": "DE.AE-1",
+          "minimum_level": 3,
+          "mandatory": true
+        },
+        {
+          "control_code": "DE.AE-2",
+          "minimum_level": 3,
+          "mandatory": true
+        },
+        {
+          "control_code": "DE.AE-3",
+          "minimum_level": 3,
+          "mandatory": true
+        },
+        {
+          "control_code": "DE.AE-4",
+          "minimum_level": 2,
+          "mandatory": true
+        },
+        {
+          "control_code": "DE.AE-6",
+          "minimum_level": 1,
+          "mandatory": true
+        },
+        {
+          "control_code": "DE.MC-1",
+          "minimum_level": 3,
+          "mandatory": true
+        },
+        {
+          "control_code": "DE.MC-2",
+          "minimum_level": 3,
+          "mandatory": true
+        },
+        {
+          "control_code": "DE.MC-4",
+          "minimum_level": 1,
+          "mandatory": true
+        },
+        {
+          "control_code": "DE.MC-5",
+          "minimum_level": 3,
+          "mandatory": true
+        },
+        {
+          "control_code": "DE.MC-6",
+          "minimum_level": 2,
+          "mandatory": true
+        },
+        {
+          "control_code": "DE.MC-7",
+          "minimum_level": 3,
+          "mandatory": true
+        },
+        {
           "control_code": "GR.CA-1",
           "minimum_level": 3,
           "mandatory": true
         },
         {
           "control_code": "GR.CA-3",
-          "minimum_level": 3,
+          "minimum_level": 2,
           "mandatory": true
         },
         {
@@ -668,12 +748,12 @@
         },
         {
           "control_code": "GR.CO-6",
-          "minimum_level": 2,
+          "minimum_level": 1,
           "mandatory": true
         },
         {
           "control_code": "GR.FR-1",
-          "minimum_level": 3,
+          "minimum_level": 1,
           "mandatory": true
         },
         {
@@ -783,7 +863,7 @@
         },
         {
           "control_code": "ID.GA-4",
-          "minimum_level": 2,
+          "minimum_level": 1,
           "mandatory": true
         },
         {
@@ -793,12 +873,12 @@
         },
         {
           "control_code": "ID.GA-6",
-          "minimum_level": 2,
+          "minimum_level": 3,
           "mandatory": true
         },
         {
           "control_code": "ID.GA-7",
-          "minimum_level": 3,
+          "minimum_level": 2,
           "mandatory": true
         },
         {
@@ -873,7 +953,7 @@
         },
         {
           "control_code": "PR.RI-2",
-          "minimum_level": 3,
+          "minimum_level": 2,
           "mandatory": true
         },
         {
@@ -937,58 +1017,33 @@
           "mandatory": true
         },
         {
-          "control_code": "DE.AE-1",
-          "minimum_level": 3,
-          "mandatory": true
-        },
-        {
-          "control_code": "DE.AE-2",
-          "minimum_level": 3,
-          "mandatory": true
-        },
-        {
-          "control_code": "DE.AE-3",
-          "minimum_level": 3,
-          "mandatory": true
-        },
-        {
-          "control_code": "DE.AE-4",
+          "control_code": "RC.CO-1",
           "minimum_level": 2,
           "mandatory": true
         },
         {
-          "control_code": "DE.AE-6",
+          "control_code": "RC.CO-2",
+          "minimum_level": 3,
+          "mandatory": true
+        },
+        {
+          "control_code": "RC.PR-1",
           "minimum_level": 1,
           "mandatory": true
         },
         {
-          "control_code": "DE.MC-1",
-          "minimum_level": 3,
-          "mandatory": true
-        },
-        {
-          "control_code": "DE.MC-2",
-          "minimum_level": 3,
-          "mandatory": true
-        },
-        {
-          "control_code": "DE.MC-4",
+          "control_code": "RC.PR-3",
           "minimum_level": 1,
           "mandatory": true
         },
         {
-          "control_code": "DE.MC-5",
-          "minimum_level": 3,
-          "mandatory": true
-        },
-        {
-          "control_code": "DE.MC-6",
+          "control_code": "RC.PR-5",
           "minimum_level": 2,
           "mandatory": true
         },
         {
-          "control_code": "DE.MC-7",
-          "minimum_level": 3,
+          "control_code": "RC.PR-6",
+          "minimum_level": 2,
           "mandatory": true
         },
         {
@@ -1043,31 +1098,6 @@
         },
         {
           "control_code": "RS.NC-1",
-          "minimum_level": 2,
-          "mandatory": true
-        },
-        {
-          "control_code": "RC.CO-1",
-          "minimum_level": 2,
-          "mandatory": true
-        },
-        {
-          "control_code": "RC.CO-2",
-          "minimum_level": 3,
-          "mandatory": true
-        },
-        {
-          "control_code": "RC.PR-1",
-          "minimum_level": 1,
-          "mandatory": true
-        },
-        {
-          "control_code": "RC.PR-5",
-          "minimum_level": 2,
-          "mandatory": true
-        },
-        {
-          "control_code": "RC.PR-6",
           "minimum_level": 2,
           "mandatory": true
         }
@@ -1399,27 +1429,9 @@
                 },
                 {
                   "code": "GR.CO-6.SR-005",
-                  "order": 1,
+                  "order": 5,
                   "mandatory": true,
-                  "maturity_level": 2
-                },
-                {
-                  "code": "GR.CO-6.SR-006",
-                  "order": 2,
-                  "mandatory": true,
-                  "maturity_level": 2
-                },
-                {
-                  "code": "GR.CO-6.SR-007",
-                  "order": 3,
-                  "mandatory": true,
-                  "maturity_level": 2
-                },
-                {
-                  "code": "GR.CO-6.SR-008",
-                  "order": 4,
-                  "mandatory": true,
-                  "maturity_level": 2
+                  "maturity_level": 1
                 }
               ],
               "maturity_levels": [
@@ -1731,31 +1743,31 @@
                   "code": "GR.FR-1.SR-001",
                   "order": 1,
                   "mandatory": true,
-                  "maturity_level": 3
+                  "maturity_level": 1
                 },
                 {
                   "code": "GR.FR-1.SR-002",
                   "order": 2,
                   "mandatory": true,
-                  "maturity_level": 3
+                  "maturity_level": 1
                 },
                 {
                   "code": "GR.FR-1.SR-003",
                   "order": 3,
                   "mandatory": true,
-                  "maturity_level": 3
+                  "maturity_level": 1
                 },
                 {
                   "code": "GR.FR-1.SR-004",
                   "order": 4,
                   "mandatory": true,
-                  "maturity_level": 3
+                  "maturity_level": 1
                 },
                 {
                   "code": "GR.FR-1.SR-005",
                   "order": 5,
                   "mandatory": true,
-                  "maturity_level": 3
+                  "maturity_level": 1
                 }
               ],
               "maturity_levels": [
@@ -2421,31 +2433,25 @@
                   "code": "GR.CA-3.SR-001",
                   "order": 1,
                   "mandatory": true,
-                  "maturity_level": 3
+                  "maturity_level": 2
                 },
                 {
                   "code": "GR.CA-3.SR-002",
                   "order": 2,
                   "mandatory": true,
-                  "maturity_level": 3
+                  "maturity_level": 2
                 },
                 {
                   "code": "GR.CA-3.SR-003",
                   "order": 3,
                   "mandatory": true,
-                  "maturity_level": 3
+                  "maturity_level": 2
                 },
                 {
                   "code": "GR.CA-3.SR-004",
                   "order": 4,
                   "mandatory": true,
-                  "maturity_level": 3
-                },
-                {
-                  "code": "GR.CA-3.SR-005",
-                  "order": 5,
-                  "mandatory": true,
-                  "maturity_level": 3
+                  "maturity_level": 2
                 }
               ],
               "maturity_levels": [
@@ -3166,25 +3172,25 @@
                   "code": "ID.GA-4.SR-001",
                   "order": 1,
                   "mandatory": true,
-                  "maturity_level": 2
+                  "maturity_level": 1
                 },
                 {
                   "code": "ID.GA-4.SR-002",
                   "order": 2,
                   "mandatory": true,
-                  "maturity_level": 2
+                  "maturity_level": 1
                 },
                 {
                   "code": "ID.GA-4.SR-003",
                   "order": 3,
                   "mandatory": true,
-                  "maturity_level": 2
+                  "maturity_level": 1
                 },
                 {
                   "code": "ID.GA-4.SR-004",
                   "order": 4,
                   "mandatory": true,
-                  "maturity_level": 2
+                  "maturity_level": 1
                 }
               ],
               "maturity_levels": [
@@ -3260,31 +3266,31 @@
                   "code": "ID.GA-6.SR-001",
                   "order": 1,
                   "mandatory": true,
-                  "maturity_level": 2
+                  "maturity_level": 3
                 },
                 {
                   "code": "ID.GA-6.SR-002",
                   "order": 2,
                   "mandatory": true,
-                  "maturity_level": 2
+                  "maturity_level": 3
                 },
                 {
                   "code": "ID.GA-6.SR-003",
                   "order": 3,
                   "mandatory": true,
-                  "maturity_level": 2
+                  "maturity_level": 3
                 },
                 {
                   "code": "ID.GA-6.SR-004",
                   "order": 4,
                   "mandatory": true,
-                  "maturity_level": 2
+                  "maturity_level": 3
                 },
                 {
                   "code": "ID.GA-6.SR-005",
                   "order": 5,
                   "mandatory": true,
-                  "maturity_level": 2
+                  "maturity_level": 3
                 }
               ],
               "maturity_levels": [
@@ -3368,36 +3374,6 @@
                   "order": 5,
                   "mandatory": true,
                   "maturity_level": 2
-                },
-                {
-                  "code": "ID.GA-7.SR-011",
-                  "order": 1,
-                  "mandatory": true,
-                  "maturity_level": 3
-                },
-                {
-                  "code": "ID.GA-7.SR-012",
-                  "order": 2,
-                  "mandatory": true,
-                  "maturity_level": 3
-                },
-                {
-                  "code": "ID.GA-7.SR-013",
-                  "order": 3,
-                  "mandatory": true,
-                  "maturity_level": 3
-                },
-                {
-                  "code": "ID.GA-7.SR-014",
-                  "order": 4,
-                  "mandatory": true,
-                  "maturity_level": 3
-                },
-                {
-                  "code": "ID.GA-7.SR-015",
-                  "order": 5,
-                  "mandatory": true,
-                  "maturity_level": 3
                 }
               ],
               "maturity_levels": [
@@ -5867,25 +5843,25 @@
                   "code": "PR.RI-2.SR-001",
                   "order": 1,
                   "mandatory": true,
-                  "maturity_level": 3
+                  "maturity_level": 2
                 },
                 {
                   "code": "PR.RI-2.SR-002",
                   "order": 2,
                   "mandatory": true,
-                  "maturity_level": 3
+                  "maturity_level": 2
                 },
                 {
                   "code": "PR.RI-2.SR-003",
                   "order": 3,
                   "mandatory": true,
-                  "maturity_level": 3
+                  "maturity_level": 2
                 },
                 {
                   "code": "PR.RI-2.SR-004",
                   "order": 4,
                   "mandatory": true,
-                  "maturity_level": 3
+                  "maturity_level": 2
                 }
               ],
               "maturity_levels": [
@@ -5914,46 +5890,22 @@
                   "code": "PR.RI-3.SR-001",
                   "order": 1,
                   "mandatory": true,
-                  "maturity_level": 2
+                  "maturity_level": 3
                 },
                 {
                   "code": "PR.RI-3.SR-002",
                   "order": 2,
                   "mandatory": true,
-                  "maturity_level": 2
+                  "maturity_level": 3
                 },
                 {
                   "code": "PR.RI-3.SR-003",
                   "order": 3,
                   "mandatory": true,
-                  "maturity_level": 2
+                  "maturity_level": 3
                 },
                 {
                   "code": "PR.RI-3.SR-004",
-                  "order": 4,
-                  "mandatory": true,
-                  "maturity_level": 2
-                },
-                {
-                  "code": "PR.RI-3.SR-005",
-                  "order": 1,
-                  "mandatory": true,
-                  "maturity_level": 3
-                },
-                {
-                  "code": "PR.RI-3.SR-006",
-                  "order": 2,
-                  "mandatory": true,
-                  "maturity_level": 3
-                },
-                {
-                  "code": "PR.RI-3.SR-007",
-                  "order": 3,
-                  "mandatory": true,
-                  "maturity_level": 3
-                },
-                {
-                  "code": "PR.RI-3.SR-008",
                   "order": 4,
                   "mandatory": true,
                   "maturity_level": 3
@@ -7725,25 +7677,25 @@
                   "code": "RC.PR-3.SR-001",
                   "order": 1,
                   "mandatory": true,
-                  "maturity_level": 4
+                  "maturity_level": 1
                 },
                 {
                   "code": "RC.PR-3.SR-002",
                   "order": 2,
                   "mandatory": true,
-                  "maturity_level": 4
+                  "maturity_level": 1
                 },
                 {
                   "code": "RC.PR-3.SR-003",
                   "order": 3,
                   "mandatory": true,
-                  "maturity_level": 4
+                  "maturity_level": 1
                 },
                 {
                   "code": "RC.PR-3.SR-004",
                   "order": 4,
                   "mandatory": true,
-                  "maturity_level": 4
+                  "maturity_level": 1
                 }
               ],
               "maturity_levels": [

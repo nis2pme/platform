@@ -7,11 +7,9 @@ usada para TOTP secrets e conteúdo de evidências.
 Campos cobertos:
 - Utilizador.nome
 - Empresa.nome, Empresa.nif, Empresa.email, Empresa.website
-- SuperAdmin.nome
 - AuditLog.ip_address, AuditLog.user_agent
 - TokenRefresh.ip_address, TokenRefresh.user_agent
 - PasswordResetToken.ip_address
-- SuperAdminRefreshToken.ip_address, SuperAdminRefreshToken.user_agent
 - Evidencia.ficheiro_nome
 
 A chave `PII_ENCRYPTION_KEY` é obrigatória em produção.

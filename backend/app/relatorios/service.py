@@ -9,9 +9,8 @@ Relatórios disponíveis:
   - Resumo executivo (visão CEO em linguagem não técnica)
   - Exportação de dados RGPD (portabilidade Art. 20)
 
-Nota: A geração DOCX (python-docx) será implementada numa fase futura.
-      Por agora os relatórios são devolvidos como JSON estruturado,
-      que o frontend pode renderizar e imprimir via CSS.
+Os relatórios são devolvidos como JSON estruturado; o frontend renderiza e
+imprime via CSS.
 """
 import logging
 import uuid

@@ -13,6 +13,8 @@ class SetupStatusSchema(BaseModel):
 
     configurado: bool
     deployment_mode: str
+    # True apenas no SaaS de avaliação (trial) — seleciona a variante legal "saas-trial".
+    is_trial: bool = False
 
 
 class SetupIniciarSchema(BaseModel):

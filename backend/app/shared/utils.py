@@ -89,7 +89,7 @@ def host_e_dominio(host: str | None) -> bool:
 def decodificar_jwt_temp(token: str, secret: str, tipo_esperado: str, algoritmo: str = "HS256") -> dict:
     """Valida e decodifica um token temporário JWT. Lança 401 se inválido ou tipo errado.
 
-    Partilhado entre auth (JWT_SECRET_KEY) e superadmin (SUPERADMIN_JWT_SECRET_KEY).
+    Genérico: o segredo é passado pelo chamador, não fixo neste módulo.
     """
     try:
         payload = jwt.decode(token, secret, algorithms=[algoritmo])

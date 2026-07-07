@@ -3,6 +3,7 @@ Router do módulo de autenticação.
 Endpoints finos — toda a lógica fica em service.py.
 Rate limiting via slowapi: 5 tentativas/minuto por IP no login.
 """
+import hmac
 import uuid
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
@@ -62,7 +63,7 @@ def _utilizador_info(db: Session, utilizador: Utilizador) -> schemas.UtilizadorI
 
 @router.post(
     "/register",
-    response_model=schemas.TokenResponseSchema,
+    response_model=schemas.RegistoCriadoSchema,
     status_code=status.HTTP_201_CREATED,
     summary="Registar nova empresa",
 )
@@ -70,24 +71,44 @@ def _utilizador_info(db: Session, utilizador: Utilizador) -> schemas.UtilizadorI
 async def registar_empresa(
     dados: schemas.RegistarEmpresaSchema,
     request: Request,
-    response: Response,
     db: Session = Depends(get_session),
+    x_internal_token: str = Header(default=None, alias="X-Internal-Token"),
 ):
     """
     Cria uma nova empresa e o seu primeiro utilizador administrador.
     Apenas disponível quando DEPLOYMENT_MODE=saas.
     Requer consentimento explícito dos termos de serviço.
-    """
-    empresa, admin = service.registar_empresa_e_admin(db, dados, request)
-    access_token = service.criar_access_token(admin)
-    refresh_token = service.criar_refresh_token(db, admin, request)
-    db.commit()  # garante que o refresh token está persistido antes da resposta
 
-    _set_refresh_cookie(response, request, refresh_token)
-    return schemas.TokenResponseSchema(
-        access_token=access_token,
-        utilizador=_utilizador_info(db, admin),
-    )
+    Em modo SaaS o registo público só é alcançável através da borda de signup,
+    que se autentica com um token interno. Sem token (ou errado) responde 404 —
+    não revela a existência do endpoint a quem o tente atingir diretamente.
+
+    O registo não autentica: devolve 201 sem token nem cookie de sessão. A conta
+    autentica-se a seguir pelo fluxo de login (onde se configura o 2FA). Assim a
+    borda que intermedeia o registo nunca recebe a sessão da conta criada.
+    """
+    if settings.DEPLOYMENT_MODE == "saas":
+        esperado = settings.SAAS_TRIAL_INTERNAL_TOKEN
+        if (
+            not esperado
+            or not x_internal_token
+            or not hmac.compare_digest(x_internal_token, esperado)
+        ):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+
+    empresa, admin = service.registar_empresa_e_admin(db, dados, request)
+    db.commit()
+
+    # Provisionar o plano do tenant (SaaS) — best-effort, fora da transação do registo.
+    # O core não escreve entitlements: pede ao gateway (escritor único) sobre mTLS interno.
+    # Se falhar, NÃO quebra o signup — a IA fica indisponível até reconciliar.
+    if settings.DEPLOYMENT_MODE == "saas":
+        import asyncio
+
+        from app.premium.provisioning import provisionar_plano
+        await asyncio.to_thread(provisionar_plano, empresa.id, dados.plano)
+
+    return schemas.RegistoCriadoSchema(empresa_id=empresa.id, admin_email=admin.email)
 
 
 # ---------------------------------------------------------------------------
@@ -404,7 +425,10 @@ async def solicitar_reset(
     (EMAIL_ENABLED=false), responde 503 — esta é uma condição global da
     instalação, não revela nada sobre utilizadores específicos.
     """
-    if not settings.EMAIL_ENABLED:
+    # Lido fresco: o wizard de setup pode ativar o email (grava no .env e invalida
+    # a cache de get_settings) sem reiniciar o processo — uma cópia de settings
+    # capturada no import ficaria presa no valor antigo.
+    if not get_settings().EMAIL_ENABLED:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="email_nao_configurado",

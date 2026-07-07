@@ -16,6 +16,10 @@ services:
     image: postgres:16-alpine
     container_name: nis2pme_db
     restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: ${DB_MEM_LIMIT:-1g}
+    cpus: ${DB_CPUS:-1.0}
+    pids_limit: 512
     logging:
       driver: "json-file"
       options:
@@ -44,6 +48,11 @@ services:
     image: ghcr.io/nis2pme/backend:latest
     container_name: nis2pme_backend
     restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    mem_limit: ${BACKEND_MEM_LIMIT:-1g}
+    cpus: ${BACKEND_CPUS:-1.0}
+    pids_limit: 512
     logging:
       driver: "json-file"
       options:
@@ -87,14 +96,32 @@ services:
     image: ghcr.io/nis2pme/frontend:latest
     container_name: nis2pme_frontend
     restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETUID, SETGID, NET_BIND_SERVICE]
+    mem_limit: ${FRONTEND_MEM_LIMIT:-128m}
+    cpus: ${FRONTEND_CPUS:-0.5}
+    pids_limit: 256
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
+    environment:
+      # Passar (não decidir): mesma flag/valor que o backend. O nginx aplica o real_ip no único
+      # ponto onde o IP do peer ainda é fidedigno; a decisão de confiar no CF é única (backend).
+      # Default false → on-prem direto não confia no CF-Connecting-IP (evita spoofing, CWE-348).
+      TRUST_CLOUDFLARE_HEADERS: ${TRUST_CLOUDFLARE_HEADERS:-false}
+      REAL_IP_FROM: ${REAL_IP_FROM:-172.16.0.0/12}
     ports:
-      - "${PORT:-80}:80"
-      - "${HTTPS_PORT:-443}:443"
+      # FRONTEND_BIND_IP: atrás de Cloudflare Tunnel/reverse-proxy → 127.0.0.1 (origem fechada à
+      # internet); on-prem com acesso direto → 0.0.0.0 (default, não quebra instalações existentes).
+      # FRONTEND_BIND_IP6: par IPv6 (default :: = todos). Atrás de túnel cujo "localhost" resolve
+      # para ::1, é preciso ouvir TAMBÉM em loopback v6 — senão o túnel não alcança a app.
+      - "${FRONTEND_BIND_IP:-0.0.0.0}:${PORT:-80}:80"
+      - "${FRONTEND_BIND_IP:-0.0.0.0}:${HTTPS_PORT:-443}:443"
+      - "${FRONTEND_BIND_IP6:-::}:${PORT:-80}:80"
+      - "${FRONTEND_BIND_IP6:-::}:${HTTPS_PORT:-443}:443"
     volumes:
       - nis2pme_nginx:/run/nginx_config
     depends_on:

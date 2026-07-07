@@ -125,3 +125,60 @@ class Msgs:
     SUPERADMIN_INATIVO = "Conta de superadmin inativa."
     SUPERADMIN_INATIVO_INEXISTENTE = "Conta de superadmin inativa ou inexistente."
     SUPERADMIN_DESATIVADO = "Conta de superadmin desativada."
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Mensagens bilingues (PT/EN)
+# ──────────────────────────────────────────────────────────────────────────
+# As constantes de Msgs acima são PT-only (migração futura). As mensagens novas
+# nascem já internacionalizadas: um dicionário {locale: texto} + traduzir(). A
+# locale vem do Accept-Language que o frontend já envia (ver locale_de_request).
+
+
+class MsgsI18n:
+    """Mensagens de erro apresentadas ao utilizador, em PT e EN."""
+
+    # Quota de armazenamento por empresa (413). {usado}/{total} em MB.
+    STORAGE_QUOTA_EXCEDIDA = {
+        "pt": (
+            "Limite de armazenamento atingido: {usado} MB de {total} MB usados. "
+            "Apague evidências para libertar espaço."
+        ),
+        "en": (
+            "Storage limit reached: {usado} MB of {total} MB used. "
+            "Delete evidence to free up space."
+        ),
+    }
+
+    # Disco do servidor sem espaço ao gravar o ficheiro (507).
+    DISCO_SEM_ESPACO = {
+        "pt": (
+            "Não foi possível guardar o ficheiro: espaço em disco insuficiente no "
+            "servidor. Contacte o administrador."
+        ),
+        "en": (
+            "Could not save the file: insufficient disk space on the server. "
+            "Contact the administrator."
+        ),
+    }
+
+
+def locale_de_request(request) -> str:
+    """Devolve 'en' se o Accept-Language começar por 'en'; senão 'pt' (default).
+
+    Robusto a request None e a headers ausentes. É a fonte de locale para as
+    mensagens de MsgsI18n — o frontend já envia Accept-Language: pt|en.
+    """
+    try:
+        header = request.headers.get("accept-language") if request is not None else None
+    except Exception:
+        header = None
+    return "en" if (header or "").strip().lower().startswith("en") else "pt"
+
+
+def traduzir(catalogo: dict, locale: str | None, **params) -> str:
+    """Resolve uma mensagem de um catálogo bilingue na locale dada (fallback 'pt'),
+    interpolando os parâmetros nomeados. Ex.: traduzir(MsgsI18n.X, 'en', usado=1)."""
+    loc = "en" if (locale or "").lower().startswith("en") else "pt"
+    texto = catalogo.get(loc) or catalogo.get("pt", "")
+    return texto.format(**params) if params else texto

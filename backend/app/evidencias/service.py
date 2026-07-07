@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import HTTPException, Request, UploadFile, status
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.auth.models import RoleUtilizador, Utilizador
@@ -35,11 +36,37 @@ from app.frameworks.runtime import (
     resolver_framework_empresa,
 )
 from app.shared.audit import Acao, ResultadoAcao, registar_acao
+from app.shared.i18n import MsgsI18n, locale_de_request, traduzir
 from app.shared.utils import resolver_locale
 
 settings = get_settings()
 
 _MAX_BYTES = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+
+_MIB = 1024 * 1024
+
+
+def _quota_bytes(tenant_id: str) -> int:
+    """Quota de armazenamento da empresa, em bytes (0 = ilimitado).
+
+    Base: settings.EVIDENCE_QUOTA_MB (env — fixa o valor do saas-trial). No SaaS
+    com premium ligado, um entitlement 'evidence_storage' (limits.total_mb) por-plano
+    sobrepõe-se. Qualquer falha na consulta cai no default do env — nunca bloqueia o
+    upload por indisponibilidade do sidecar. No open-core (sem premium) usa só o env.
+    """
+    quota_mb = settings.EVIDENCE_QUOTA_MB
+    try:
+        from app.premium.client import get_premium_client
+
+        client = get_premium_client()
+        if client.enabled:
+            ent = client.check_entitlement(tenant_id, "evidence_storage")
+            total_mb = ent.limits.get("total_mb") if ent.enabled else None
+            if total_mb:
+                quota_mb = int(total_mb)
+    except Exception:
+        pass
+    return max(0, quota_mb) * _MIB
 
 
 # ---------------------------------------------------------------------------
@@ -440,6 +467,27 @@ async def criar_evidencia(
                 detail="O ficheiro não pode estar vazio.",
             )
 
+        # Quota de armazenamento por empresa (0 = ilimitado). Verificada ANTES de
+        # gravar. Uso = soma dos tamanhos lógicos das evidências não-eliminadas.
+        quota = _quota_bytes(str(empresa_id))
+        if quota:
+            usado: int = db.exec(
+                select(func.coalesce(func.sum(Evidencia.ficheiro_tamanho), 0)).where(
+                    Evidencia.empresa_id == empresa_id,
+                    Evidencia.deleted_at.is_(None),  # type: ignore[union-attr]
+                )
+            ).one()
+            if usado + len(conteudo_bytes) > quota:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail=traduzir(
+                        MsgsI18n.STORAGE_QUOTA_EXCEDIDA,
+                        locale_de_request(request),
+                        usado=usado // _MIB,
+                        total=quota // _MIB,
+                    ),
+                )
+
         # Validar magic bytes reais do conteúdo — impede Content-Type falsificado (CWE-434)
         if not _validar_magic_bytes(conteudo_bytes, content_type):
             raise HTTPException(
@@ -490,8 +538,20 @@ async def criar_evidencia(
             bytes_a_escrever = fernet.encrypt(conteudo_bytes)
             ficheiro_cifrado = True
 
-        with open(destino_path, "wb") as file_handle:
-            file_handle.write(bytes_a_escrever)
+        try:
+            with open(destino_path, "wb") as file_handle:
+                file_handle.write(bytes_a_escrever)
+        except OSError as exc:
+            # Disco cheio (ENOSPC) ou falha de escrita: limpa o ficheiro parcial e
+            # devolve um erro claro (507) em vez de rebentar num 500 genérico.
+            try:
+                destino_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise HTTPException(
+                status_code=status.HTTP_507_INSUFFICIENT_STORAGE,
+                detail=traduzir(MsgsI18n.DISCO_SEM_ESPACO, locale_de_request(request)),
+            ) from exc
 
         ficheiro_path = str(destino_path)
         ficheiro_nome = cifrar_pii(nome_original)
@@ -637,6 +697,14 @@ def eliminar_evidencia(
     evidencia = _get_evidencia_or_404(db, evidencia_id, empresa_id)
     evidencia.deleted_at = datetime.now(timezone.utc)
     db.add(evidencia)
+
+    # Liberta o disco: o soft-delete mantém a linha (auditoria/retenção) mas o
+    # ficheiro físico é removido — deixa de contar na quota e não enche o volume.
+    if evidencia.ficheiro_path:
+        try:
+            os.remove(evidencia.ficheiro_path)
+        except OSError:
+            pass
 
     registar_acao(
         db,

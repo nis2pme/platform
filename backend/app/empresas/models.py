@@ -80,7 +80,7 @@ class Empresa(SQLModel, table=True):
 
     # Estado da conta
     ativo: bool = Field(default=True)
-    suspenso: bool = Field(default=False)   # gerido pelo superadmin SaaS
+    suspenso: bool = Field(default=False)   # suspensão administrativa (mecanismo multi-tenant)
     onboarding_completo: bool = Field(default=False)
 
     # Framework de conformidade ativo (V2). Quando definido, o tenant usa a camada V2.
