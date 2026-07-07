@@ -45,7 +45,7 @@ class Settings(BaseSettings):
 
     # --- Aplicação ---
     APP_NAME: str = "NIS2PME"
-    APP_VERSION: str = "0.2.0"
+    APP_VERSION: str = "0.3.0"
     DEBUG: bool = False
     # Activar Swagger UI / ReDoc explicitamente, independente do flag DEBUG.
     # Em produção deve ser False mesmo que DEBUG fique True acidentalmente (CWE-215).
