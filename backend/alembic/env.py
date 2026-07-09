@@ -15,14 +15,20 @@ from sqlmodel import SQLModel
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Carregar .env manualmente (antes de importar app.config para garantir que as
-# variáveis estão disponíveis mesmo quando corrido directamente via alembic CLI)
+# variáveis estão disponíveis mesmo quando corrido directamente via alembic CLI).
+# Best-effort: em produção o DATABASE_URL já chega via env_file/environment do
+# compose, por isso um .env ilegível (ex.: dono/permissões desalinhados com o uid
+# do container) não deve impedir a migração de correr.
 _env_file = Path(__file__).parent.parent / ".env"
-if _env_file.exists():
-    for _line in _env_file.read_text(encoding="utf-8").splitlines():
-        _line = _line.strip()
-        if _line and not _line.startswith("#") and "=" in _line:
-            _key, _, _val = _line.partition("=")
-            os.environ.setdefault(_key.strip(), _val.strip())
+try:
+    if _env_file.exists():
+        for _line in _env_file.read_text(encoding="utf-8").splitlines():
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _key, _, _val = _line.partition("=")
+                os.environ.setdefault(_key.strip(), _val.strip())
+except OSError as _e:
+    print(f"[alembic] AVISO: não foi possível ler {_env_file}: {_e}")
 
 # Importar TODOS os modelos — necessário para que SQLModel.metadata os inclua
 from app.empresas.models import Empresa  # noqa: F401

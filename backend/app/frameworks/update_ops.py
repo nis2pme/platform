@@ -7,6 +7,9 @@ que envolvem remoções, reclassificações ou substituições de controlos/sub-
 
   - apagar_subrequisitos_controlos: força re-verificação de controlos "recriados"
     (apaga SRs + checks dos tenants antes do reimport → UUIDs novos).
+  - renomear_subrequisitos: renumera códigos de SRs in-place (mesmo UUID), preservando
+    os checks dos tenants; usado quando um controlo ganha um nível inferior e os SRs
+    existentes têm de deslocar de código.
   - prune_framework_orphans: remove definições órfãs que o upsert deixa para trás
     (SRs e thresholds que já não existem na definição nova).
   - reset_estado_controlos: repõe o estado por-empresa de controlos recriados.
@@ -78,6 +81,56 @@ def apagar_subrequisitos_controlos(db: Session, framework: Framework, codes) -> 
         ).all():
             _apagar_sr(db, sr)
             total += 1
+    db.commit()
+    return total
+
+
+def renomear_subrequisitos(
+    db: Session, framework: Framework, control_code: str, mapping: dict[str, str]
+) -> int:
+    """Renomeia códigos de SubRequirement in-place para um controlo, mantendo o mesmo
+    id (UUID). Como os checks dos tenants e os locales referenciam o SR pelo id, o
+    progresso concluído é preservado.
+
+    mapping: {code_antigo: code_novo}. O rename é feito em duas fases (código temporário
+    → código final) para tolerar remapeamentos que colidam entre si — ex: deslocar
+    SR-001..005 para SR-005..009, onde o destino de um é a origem de outro.
+
+    Devolve o número de SRs renomeados.
+    """
+    ctrl = controls_por_codigo(db, framework, [control_code]).get(control_code)
+    if ctrl is None or not mapping:
+        return 0
+
+    srs = {
+        sr.code: sr
+        for sr in db.exec(
+            select(SubRequirement).where(SubRequirement.control_id == ctrl.id)
+        ).all()
+    }
+
+    total = 0
+    # Fase 1: origem → código temporário único. O flush por linha emite um UPDATE
+    # individual (não um executemany em lote), evitando violar a chave control_id+code
+    # a meio do lote quando o destino de um código é a origem de outro.
+    for old_code, new_code in mapping.items():
+        sr = srs.get(old_code)
+        if sr is None:
+            continue
+        sr.code = f"__tmp__{new_code}"
+        db.add(sr)
+        db.flush()
+        total += 1
+
+    # Fase 2: código temporário → código final (também com flush por linha).
+    for old_code, new_code in mapping.items():
+        sr = srs.get(old_code)
+        if sr is None:
+            continue
+        sr.code = new_code
+        db.add(sr)
+        db.flush()
+
     db.commit()
     return total
 

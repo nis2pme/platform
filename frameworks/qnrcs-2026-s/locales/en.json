@@ -304,9 +304,18 @@
           "effort": "8–16 hours | One to two people | Variable cost (according to redundancies)"
         },
         "3": {
-          "description": "High",
-          "indicators": [],
-          "evidence": []
+          "description": "Test the Business Continuity Plan to ensure it responds effectively to the recovery of critical services.",
+          "indicators": [
+            "Plan and carry out periodic tests of the Business Continuity Plan (e.g. simulations, recovery exercises).",
+            "Record the results of each test, including the recovery times achieved and the failures detected.",
+            "Review and update the Business Continuity Plan based on the lessons learned in the tests."
+          ],
+          "evidence": [
+            "Report on the execution of the Business Continuity Plan tests, with date, scenario tested and results.",
+            "Record of the updates made to the Plan following the tests."
+          ],
+          "tip": "A plan that is never tested is just a document — the first test usually reveals wrong assumptions (outdated contacts, backups that don't restore). Start with a simple tabletop exercise.",
+          "effort": "1–2 days | IT team + critical service owners | No additional cost"
         },
         "4": {
           "description": "Advanced",
@@ -535,9 +544,18 @@
           "effort": "6–10 hours | One person | No additional cost"
         },
         "3": {
-          "description": "High",
-          "indicators": [],
-          "evidence": []
+          "description": "Formalize the risk management methodology in an approved and implemented Cybersecurity Risk Management Policy.",
+          "indicators": [
+            "Draw up the Cybersecurity Risk Management Policy, incorporating the methodology for identifying, calculating, categorizing and prioritizing risks.",
+            "Obtain formal approval of the Policy by the management, direction and administration bodies.",
+            "Implement and communicate the Policy, ensuring its periodic review and updating."
+          ],
+          "evidence": [
+            "Approved Cybersecurity Risk Management Policy, with date and signature of the management bodies.",
+            "Record of the communication of the Policy and its periodic review plan."
+          ],
+          "tip": "The methodology (Substantial level) is 'how' risks are managed; the Policy (High level) is the formal document that makes it official and mandatory across the entity.",
+          "effort": "4–8 hours | Cybersecurity officer + management approval | No additional cost"
         },
         "4": {
           "description": "Advanced",
@@ -2263,9 +2281,19 @@
           "effort": "2–4 hours | Two people (HR + IT) | No additional cost"
         },
         "3": {
-          "description": "High",
-          "indicators": [],
-          "evidence": []
+          "description": "Ensure unique credentials for each user, device and process that interacts with critical systems, with exceptions documented and approved.",
+          "indicators": [
+            "Identify the users, devices and processes that interact with the critical systems.",
+            "Assign unique credentials to each one, avoiding shared accounts or credentials.",
+            "Identify and document all exceptions (cases where unique credentials are not possible).",
+            "Obtain formal approval for each exception, in accordance with the Identity, Authentication and Access Control Management Policy."
+          ],
+          "evidence": [
+            "Screenshot of the identity management showing unique credentials assigned to users, devices and processes of the critical systems.",
+            "Documented record of the exceptions to the Identity, Authentication and Access Control Management Policy, with their respective approval."
+          ],
+          "tip": "Shared accounts (e.g. one 'admin' used by several people) make it impossible to know who did what. Each person, device or service should have its own credential.",
+          "effort": "1–3 days | One IT person | No additional cost"
         },
         "4": {
           "description": "Advanced",
@@ -2715,9 +2743,19 @@
       "description": "Data that circulates between systems (internal or external) is protected so that no one can read or change it during transmission.",
       "maturity_levels": {
         "1": {
-          "description": "Basic",
-          "indicators": [],
-          "evidence": []
+          "description": "Implement cryptographic mechanisms to protect access to data and information considered critical/sensitive while it circulates on the network.",
+          "indicators": [
+            "Identify the critical/sensitive data and information that circulates on the network, whether internal or external.",
+            "Enable encryption (HTTPS/TLS) on the services and applications that transmit this data.",
+            "Use encrypted channels (for example VPN) for remote access and for connections between locations.",
+            "Avoid unencrypted protocols (HTTP, FTP, Telnet) when accessing critical/sensitive data."
+          ],
+          "evidence": [
+            "Screenshot of the HTTPS/TLS configuration on the services that handle critical data, showing the protocol and the certificate.",
+            "Screenshot of the encryption configuration of the remote access/VPN used to access this data."
+          ],
+          "tip": "Open an internal company site in the browser: if it shows a padlock (https://) the connection is encrypted; if it uses http:// the data travels in the clear for anyone on the same network.",
+          "effort": "2–4 hours | One IT person | No additional cost"
         },
         "2": {
           "description": "Substantial",

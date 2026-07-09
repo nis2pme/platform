@@ -31,14 +31,19 @@ if _secrets_file.exists():
             _key, _, _val = _line.partition("=")
             os.environ.setdefault(_key.strip(), _val.strip())
 
-# 2. .env local (desenvolvimento)
+# 2. .env local (desenvolvimento) — best-effort: em produção o DATABASE_URL já
+# chega via env_file/environment do compose, por isso um .env ilegível não deve
+# impedir o script de correr.
 _env_file = Path(__file__).resolve().parents[1] / ".env"
-if _env_file.exists():
-    for _line in _env_file.read_text(encoding="utf-8").splitlines():
-        _line = _line.strip()
-        if _line and not _line.startswith("#") and "=" in _line:
-            _key, _, _val = _line.partition("=")
-            os.environ.setdefault(_key.strip(), _val.strip())
+try:
+    if _env_file.exists():
+        for _line in _env_file.read_text(encoding="utf-8").splitlines():
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _key, _, _val = _line.partition("=")
+                os.environ.setdefault(_key.strip(), _val.strip())
+except OSError:
+    pass
 
 # Forçar on-prem (defensivo, caso algum import futuro carregue a config)
 os.environ.setdefault("DEPLOYMENT_MODE", "onprem")
@@ -58,6 +63,7 @@ try:
     from sqlalchemy.exc import OperationalError
     from sqlmodel import Session, create_engine, select
 
+    from app.empresas.models import Empresa  # noqa: F401 — regista o mapper antes do Utilizador
     from app.auth.models import CodigoBackup2FA, RoleUtilizador, TokenRefresh, Utilizador
     from app.shared.audit import AuditLog, ResultadoAcao
     from app.shared.utils import validar_forca_password

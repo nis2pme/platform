@@ -50,6 +50,11 @@ services:
     restart: unless-stopped
     security_opt: ["no-new-privileges:true"]
     cap_drop: [ALL]
+    # DAC_OVERRIDE: o .env do host é montado abaixo para o wizard poder gravar config
+    # SMTP; o dono/permissões desse ficheiro no host raramente coincidem com o uid
+    # 10001 do container (ex.: criado por root com chmod 600) — sem esta cap, a app
+    # fica sem conseguir ler nem escrever /app/.env ("Permission denied").
+    cap_add: [DAC_OVERRIDE]
     mem_limit: ${BACKEND_MEM_LIMIT:-1g}
     cpus: ${BACKEND_CPUS:-1.0}
     pids_limit: 512

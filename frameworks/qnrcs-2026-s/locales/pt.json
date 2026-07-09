@@ -304,9 +304,18 @@
           "effort": "8–16 horas | Uma a duas pessoas | Custo variável (conforme redundâncias)"
         },
         "3": {
-          "description": "Elevado",
-          "indicators": [],
-          "evidence": []
+          "description": "Testar o Plano de Continuidade de Negócio para garantir que responde eficazmente à recuperação dos serviços críticos.",
+          "indicators": [
+            "Planear e realizar testes periódicos ao Plano de Continuidade de Negócio (ex: simulações, exercícios de recuperação).",
+            "Registar os resultados de cada teste, incluindo os tempos de recuperação obtidos e as falhas detetadas.",
+            "Rever e atualizar o Plano de Continuidade de Negócio com base nas lições aprendidas nos testes."
+          ],
+          "evidence": [
+            "Relatório de execução dos testes ao Plano de Continuidade de Negócio, com data, cenário testado e resultados.",
+            "Registo das atualizações feitas ao Plano na sequência dos testes."
+          ],
+          "tip": "Um plano nunca testado é apenas um documento — o primeiro teste costuma revelar pressupostos errados (contactos desatualizados, backups que não restauram). Comece por um exercício de mesa simples.",
+          "effort": "1–2 dias | Equipa de TI + responsáveis dos serviços críticos | Sem custo adicional"
         },
         "4": {
           "description": "Suplementar",
@@ -535,9 +544,18 @@
           "effort": "6–10 horas | Uma pessoa | Sem custo adicional"
         },
         "3": {
-          "description": "Elevado",
-          "indicators": [],
-          "evidence": []
+          "description": "Formalizar a metodologia de gestão dos riscos numa Política de Gestão dos Riscos de Cibersegurança aprovada e implementada.",
+          "indicators": [
+            "Elaborar a Política de Gestão dos Riscos de Cibersegurança, incorporando a metodologia de identificação, cálculo, categorização e priorização dos riscos.",
+            "Obter aprovação formal da Política pelos órgãos de gestão, direção e administração.",
+            "Implementar e comunicar a Política, garantindo a sua revisão e atualização periódicas."
+          ],
+          "evidence": [
+            "Política de Gestão dos Riscos de Cibersegurança aprovada, com data e assinatura dos órgãos de gestão.",
+            "Registo da comunicação da Política e do respetivo plano de revisão periódica."
+          ],
+          "tip": "A metodologia (nível Substancial) é o 'como' se gerem os riscos; a Política (nível Elevado) é o documento formal que a torna oficial e obrigatória em toda a entidade.",
+          "effort": "4–8 horas | Responsável de cibersegurança + aprovação da gestão | Sem custo adicional"
         },
         "4": {
           "description": "Suplementar",
@@ -2263,9 +2281,19 @@
           "effort": "2–4 horas | Duas pessoas (RH + TI) | Sem custo adicional"
         },
         "3": {
-          "description": "Elevado",
-          "indicators": [],
-          "evidence": []
+          "description": "Garantir credenciais únicas para cada utilizador, dispositivo e processo que interaja com sistemas críticos, com as exceções documentadas e aprovadas.",
+          "indicators": [
+            "Identificar os utilizadores, dispositivos e processos que interagem com os sistemas críticos.",
+            "Atribuir credenciais únicas a cada um, evitando contas ou credenciais partilhadas.",
+            "Identificar e documentar todas as exceções (casos em que não é possível ter credenciais únicas).",
+            "Obter aprovação formal para cada exceção, de acordo com a Política de Gestão de Identidades, Autenticação e Controlo de Acessos."
+          ],
+          "evidence": [
+            "Print de ecrã da gestão de identidades a mostrar credenciais únicas atribuídas a utilizadores, dispositivos e processos dos sistemas críticos.",
+            "Registo documentado das exceções à Política de Gestão de Identidades, Autenticação e Controlo de Acessos, com a respetiva aprovação."
+          ],
+          "tip": "Contas partilhadas (ex: um 'admin' usado por várias pessoas) tornam impossível saber quem fez o quê. Cada pessoa, dispositivo ou serviço deve ter a sua própria credencial.",
+          "effort": "1–3 dias | Uma pessoa de TI | Sem custo adicional"
         },
         "4": {
           "description": "Suplementar",
@@ -2715,9 +2743,19 @@
       "description": "Os dados que circulam entre sistemas (internos ou externos) são protegidos para que ninguém consiga lê-los ou alterá-los durante a transmissão.",
       "maturity_levels": {
         "1": {
-          "description": "Básico",
-          "indicators": [],
-          "evidence": []
+          "description": "Implementar mecanismos criptográficos para proteger o acesso aos dados e informação considerada crítica/sensível quando circulam na rede.",
+          "indicators": [
+            "Identificar os dados e informação crítica/sensível que circulam na rede, interna ou externa.",
+            "Ativar encriptação (HTTPS/TLS) nos serviços e aplicações que transmitem esses dados.",
+            "Utilizar canais cifrados (por exemplo VPN) para o acesso remoto e para ligações entre localizações.",
+            "Evitar protocolos sem encriptação (HTTP, FTP, Telnet) no acesso a dados críticos/sensíveis."
+          ],
+          "evidence": [
+            "Print de ecrã da configuração HTTPS/TLS nos serviços que tratam dados críticos, mostrando o protocolo e o certificado.",
+            "Print de ecrã da configuração de encriptação do acesso remoto/VPN utilizado para aceder a esses dados."
+          ],
+          "tip": "Abra um site interno da empresa no browser: se tiver cadeado (https://) a ligação está cifrada; se estiver em http:// os dados viajam legíveis para qualquer pessoa na mesma rede.",
+          "effort": "2–4 horas | Uma pessoa de TI | Sem custo adicional"
         },
         "2": {
           "description": "Substancial",
