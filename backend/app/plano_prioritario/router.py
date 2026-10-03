@@ -7,7 +7,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request
 from sqlmodel import Session
 
-from app.auth.models import RoleUtilizador, Utilizador
+from app.auth.models import Utilizador
 from app.database import get_session
 from app.plano_prioritario import service
 from app.plano_prioritario.schemas import (
@@ -15,7 +15,8 @@ from app.plano_prioritario.schemas import (
     QuestionarioRespostasIn,
     QuestionarioRespostasOut,
 )
-from app.shared.dependencies import get_current_user, get_empresa_ativa, require_role
+from app.shared.capacidades import ClasseAcao, require_capability
+from app.shared.dependencies import get_current_user, get_empresa_ativa
 from app.shared.utils import parse_accept_language
 
 router = APIRouter(prefix="/plano-prioritario", tags=["Plano Prioritário"])
@@ -29,12 +30,12 @@ router = APIRouter(prefix="/plano-prioritario", tags=["Plano Prioritário"])
     "/questionario",
     response_model=QuestionarioRespostasOut,
     summary="Guardar respostas ao questionário e gerar plano",
-    dependencies=[Depends(require_role(RoleUtilizador.ADMIN, RoleUtilizador.SUBADMIN))],
+    dependencies=[Depends(require_capability("plano", ClasseAcao.GOVERNAR))],
 )
-async def guardar_questionario(
+def guardar_questionario(
     payload: QuestionarioRespostasIn,
     utilizador: Utilizador = Depends(get_current_user),
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_session, scope="function"),
 ):
     """
     Recebe as respostas ao questionário de 10 perguntas.
@@ -57,11 +58,11 @@ async def guardar_questionario(
     "/questionario",
     response_model=QuestionarioRespostasOut | None,
     summary="Obter respostas actuais ao questionário",
-    dependencies=[Depends(require_role(RoleUtilizador.ADMIN, RoleUtilizador.SUBADMIN))],
+    dependencies=[Depends(require_capability("plano", ClasseAcao.GOVERNAR))],
 )
-async def obter_questionario(
+def obter_questionario(
     utilizador: Utilizador = Depends(get_current_user),
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_session, scope="function"),
 ):
     """Devolve as respostas guardadas ou null se não preenchido."""
     empresa = get_empresa_ativa(db, utilizador)
@@ -76,11 +77,15 @@ async def obter_questionario(
     "/plano",
     response_model=PlanoOut,
     summary="Obter resumo do plano de ações prioritárias",
+    # Leitura de toda a equipa, não só de quem governa o plano: é o que o painel
+    # mostra a quem entra. O alcance de cada um é aplicado no service, que filtra
+    # o plano pelos controlos que a pessoa alcança.
+    dependencies=[Depends(require_capability("plano", ClasseAcao.VER))],
 )
-async def obter_plano(
+def obter_plano(
     request: Request,
     utilizador: Utilizador = Depends(get_current_user),
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_session, scope="function"),
 ):
     """
     Devolve apenas os primeiros controlos não conformes mostrados no dashboard.
@@ -103,13 +108,15 @@ async def obter_plano(
     "/plano/regenerar",
     response_model=PlanoOut,
     summary="Regenerar plano de ações prioritárias",
-    dependencies=[Depends(require_role(RoleUtilizador.ADMIN, RoleUtilizador.SUBADMIN))],
+    dependencies=[Depends(require_capability("plano", ClasseAcao.GOVERNAR))],
 )
-async def regenerar_plano(
+def regenerar_plano(
+    request: Request,
     utilizador: Utilizador = Depends(get_current_user),
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_session, scope="function"),
 ):
     """Força a regeneração do plano com os dados e respostas actuais."""
     empresa = get_empresa_ativa(db, utilizador)
+    locale = parse_accept_language(request.headers.get("accept-language"))
     service.gerar_plano(db, empresa)
-    return service.obter_plano(db, empresa)
+    return service.obter_plano(db, empresa, locale=locale, utilizador=utilizador)

@@ -1,0 +1,203 @@
+{
+  "versao": "RNCSIRT-3.3",
+  "fonte": {
+    "pt": "Taxonomia Comum da Rede Nacional de CSIRT, v3.3 (dezembro de 2023), Tabela 2 - Classificação de Incidentes. Usada até o CNCS publicar a taxonomia prevista no art. 41.º, n.º 4 do Regime Jurídico da Cibersegurança.",
+    "en": "Common Taxonomy of the Portuguese National CSIRT Network, v3.3 (December 2023), Table 2 - Incident Classification. Used until the CNCS publishes the taxonomy required by article 41(4) of the Portuguese Cybersecurity Legal Framework."
+  },
+  "omissao": "outro.indeterminado",
+  "classes": [
+    {
+      "codigo": "conteudo_abusivo",
+      "pt": "Conteúdo abusivo",
+      "en": "Abusive content",
+      "tipos": [
+        {"codigo": "conteudo_abusivo.spam", "pt": "Spam", "en": "Spam",
+         "ajuda_pt": "Envio em massa de mensagens não pedidas.",
+         "ajuda_en": "Unsolicited bulk messages."},
+        {"codigo": "conteudo_abusivo.discurso_nocivo", "pt": "Discurso nocivo", "en": "Harmful speech",
+         "ajuda_pt": "Perseguição, ameaças ou discriminação contra pessoas.",
+         "ajuda_en": "Bullying, harassment, threats or discrimination against people."},
+        {"codigo": "conteudo_abusivo.conteudo_proibido", "pt": "Exploração sexual de menores, racismo e apologia da violência", "en": "Child sexual exploitation, sexual or violent content",
+         "ajuda_pt": "Conteúdos proibidos por lei.",
+         "ajuda_en": "Content prohibited by law."}
+      ]
+    },
+    {
+      "codigo": "codigo_malicioso",
+      "pt": "Código malicioso",
+      "en": "Malicious code",
+      "tipos": [
+        {"codigo": "codigo_malicioso.sistema_infetado", "pt": "Sistema infetado", "en": "Infected system",
+         "ajuda_pt": "Computador, telemóvel ou servidor com malware (vírus, trojan, rootkit).",
+         "ajuda_en": "Computer, phone or server infected with malware (virus, trojan, rootkit)."},
+        {"codigo": "codigo_malicioso.servidor_c2", "pt": "Servidor de comando e controlo", "en": "C2 server",
+         "ajuda_pt": "Servidor que controla máquinas infetadas.",
+         "ajuda_en": "Server that controls infected machines."},
+        {"codigo": "codigo_malicioso.distribuicao_malware", "pt": "Distribuição de malware", "en": "Malware distribution",
+         "ajuda_pt": "Endereço usado para espalhar malware, por exemplo num email ou site.",
+         "ajuda_en": "Address used to spread malware, for example in an email or website."},
+        {"codigo": "codigo_malicioso.configuracao_malware", "pt": "Configuração de malware", "en": "Malware configuration",
+         "ajuda_pt": "Endereço que aloja a configuração de um malware.",
+         "ajuda_en": "Address hosting a malware configuration file."}
+      ]
+    },
+    {
+      "codigo": "recolha_informacao",
+      "pt": "Recolha de informação",
+      "en": "Information gathering",
+      "tipos": [
+        {"codigo": "recolha_informacao.scanning", "pt": "Scanning", "en": "Scanning",
+         "ajuda_pt": "Pedidos a sistemas para descobrir pontos fracos.",
+         "ajuda_en": "Requests sent to systems to find weaknesses."},
+        {"codigo": "recolha_informacao.sniffing", "pt": "Sniffing", "en": "Sniffing",
+         "ajuda_pt": "Observação ou gravação de tráfego de rede.",
+         "ajuda_en": "Observing or recording network traffic."},
+        {"codigo": "recolha_informacao.engenharia_social", "pt": "Engenharia social", "en": "Social engineering",
+         "ajuda_pt": "Obter informação de pessoas por mentiras, truques ou ameaças (ex.: falso suporte técnico, fraude do CEO).",
+         "ajuda_en": "Getting information from people through lies, tricks or threats (e.g. fake tech support, CEO fraud)."}
+      ]
+    },
+    {
+      "codigo": "tentativa_intrusao",
+      "pt": "Tentativa de intrusão",
+      "en": "Intrusion attempts",
+      "tipos": [
+        {"codigo": "tentativa_intrusao.exploracao_vulnerabilidade", "pt": "Exploração de vulnerabilidade conhecida", "en": "Exploitation of known vulnerabilities",
+         "ajuda_pt": "Tentativa de entrar num sistema através de uma falha conhecida (CVE).",
+         "ajuda_en": "Attempt to break into a system through a known flaw (CVE)."},
+        {"codigo": "tentativa_intrusao.tentativa_login", "pt": "Tentativa de login", "en": "Login attempts",
+         "ajuda_pt": "Muitas tentativas de adivinhar palavras-passe.",
+         "ajuda_en": "Many attempts to guess passwords."},
+        {"codigo": "tentativa_intrusao.nova_assinatura", "pt": "Nova assinatura de ataque", "en": "New attack signature",
+         "ajuda_pt": "Ataque que usa uma falha desconhecida.",
+         "ajuda_en": "Attack using an unknown exploit."}
+      ]
+    },
+    {
+      "codigo": "intrusao",
+      "pt": "Intrusão",
+      "en": "Intrusions",
+      "tipos": [
+        {"codigo": "intrusao.conta_privilegiada", "pt": "Comprometimento de conta privilegiada", "en": "Privileged account compromise",
+         "ajuda_pt": "O atacante entrou com privilégios de administrador.",
+         "ajuda_en": "The attacker gained administrator privileges."},
+        {"codigo": "intrusao.conta_nao_privilegiada", "pt": "Comprometimento de conta não privilegiada", "en": "Unprivileged account compromise",
+         "ajuda_pt": "O atacante entrou com uma conta normal de utilizador ou de serviço.",
+         "ajuda_en": "The attacker got in with a normal user or service account."},
+        {"codigo": "intrusao.aplicacao", "pt": "Comprometimento de aplicação", "en": "Application compromise",
+         "ajuda_pt": "Uma aplicação foi comprometida através de uma falha (ex.: SQL injection).",
+         "ajuda_en": "An application was compromised through a flaw (e.g. SQL injection)."},
+        {"codigo": "intrusao.sistema", "pt": "Comprometimento de sistema", "en": "System compromise",
+         "ajuda_pt": "Entradas ou comandos não autorizados num sistema.",
+         "ajuda_en": "Unauthorised logins or commands on a system."},
+        {"codigo": "intrusao.arrombamento", "pt": "Arrombamento", "en": "Burglary",
+         "ajuda_pt": "Intrusão física, por exemplo no edifício ou na sala de servidores.",
+         "ajuda_en": "Physical intrusion, for example into the building or server room."}
+      ]
+    },
+    {
+      "codigo": "disponibilidade",
+      "pt": "Disponibilidade",
+      "en": "Availability",
+      "tipos": [
+        {"codigo": "disponibilidade.dos", "pt": "Negação de serviço", "en": "Denial of service",
+         "ajuda_pt": "Pedidos feitos para deixar um serviço lento ou em baixo.",
+         "ajuda_en": "Requests crafted to slow down or crash a service."},
+        {"codigo": "disponibilidade.ddos", "pt": "Negação de serviço distribuída", "en": "Distributed denial of service",
+         "ajuda_pt": "O mesmo, a partir de muitas origens ao mesmo tempo.",
+         "ajuda_en": "The same, from many sources at once."},
+        {"codigo": "disponibilidade.configuracao_incorreta", "pt": "Configuração incorreta", "en": "Misconfiguration",
+         "ajuda_pt": "Uma configuração errada deixou um serviço indisponível.",
+         "ajuda_en": "A wrong configuration made a service unavailable."},
+        {"codigo": "disponibilidade.sabotagem", "pt": "Sabotagem", "en": "Sabotage",
+         "ajuda_pt": "Dano intencional para parar um serviço (lógico ou físico).",
+         "ajuda_en": "Intentional damage to stop a service (logical or physical)."},
+        {"codigo": "disponibilidade.interrupcao", "pt": "Interrupção", "en": "Outage",
+         "ajuda_pt": "Paragem por falha técnica ou desastre natural (ex.: falha de energia ou de ar condicionado).",
+         "ajuda_en": "Outage caused by a technical failure or natural disaster (e.g. power or air conditioning failure)."}
+      ]
+    },
+    {
+      "codigo": "seguranca_informacao",
+      "pt": "Segurança da informação",
+      "en": "Information content security",
+      "tipos": [
+        {"codigo": "seguranca_informacao.acesso_nao_autorizado", "pt": "Acesso não autorizado à informação", "en": "Unauthorised access to information",
+         "ajuda_pt": "Alguém viu informação a que não devia ter acesso.",
+         "ajuda_en": "Someone accessed information they should not have."},
+        {"codigo": "seguranca_informacao.modificacao_nao_autorizada", "pt": "Modificação não autorizada da informação", "en": "Unauthorised modification of information",
+         "ajuda_pt": "Informação alterada ou cifrada sem autorização, incluindo ransomware e defacement.",
+         "ajuda_en": "Information changed or encrypted without authorisation, including ransomware and defacement."},
+        {"codigo": "seguranca_informacao.perda_dados", "pt": "Perda de dados", "en": "Data loss",
+         "ajuda_pt": "Dados perdidos, por exemplo por avaria de disco ou furto de equipamento.",
+         "ajuda_en": "Data lost, for example through disk failure or theft of equipment."},
+        {"codigo": "seguranca_informacao.exfiltracao", "pt": "Exfiltração de informação", "en": "Leak of confidential information",
+         "ajuda_pt": "Informação confidencial ou dados pessoais saíram da empresa.",
+         "ajuda_en": "Confidential information or personal data left the company."}
+      ]
+    },
+    {
+      "codigo": "fraude",
+      "pt": "Fraude",
+      "en": "Fraud",
+      "tipos": [
+        {"codigo": "fraude.utilizacao_indevida", "pt": "Utilização indevida ou não autorizada de recursos", "en": "Unauthorised use of resources",
+         "ajuda_pt": "Recursos da empresa usados para outros fins.",
+         "ajuda_en": "Company resources used for other purposes."},
+        {"codigo": "fraude.direitos_autor", "pt": "Direitos de autor", "en": "Copyright",
+         "ajuda_pt": "Software ou conteúdos sem licença.",
+         "ajuda_en": "Unlicensed software or content."},
+        {"codigo": "fraude.utilizacao_ilegitima_nome", "pt": "Utilização ilegítima de nome de terceiros", "en": "Masquerade",
+         "ajuda_pt": "Alguém se fez passar pela empresa ou por outra pessoa.",
+         "ajuda_en": "Someone impersonated the company or another person."},
+        {"codigo": "fraude.phishing", "pt": "Phishing", "en": "Phishing",
+         "ajuda_pt": "Mensagem ou site falso para roubar credenciais.",
+         "ajuda_en": "Fake message or website to steal credentials."}
+      ]
+    },
+    {
+      "codigo": "vulnerabilidade",
+      "pt": "Vulnerabilidade",
+      "en": "Vulnerable",
+      "tipos": [
+        {"codigo": "vulnerabilidade.criptografia_fraca", "pt": "Criptografia fraca", "en": "Weak cryptography",
+         "ajuda_pt": "Serviço público com cifra fraca.",
+         "ajuda_en": "Public service offering weak cryptography."},
+        {"codigo": "vulnerabilidade.amplificador_ddos", "pt": "Amplificador DDoS", "en": "DDoS amplifier",
+         "ajuda_pt": "Serviço público que pode ser abusado para ataques de negação de serviço.",
+         "ajuda_en": "Public service that can be abused for denial-of-service attacks."},
+        {"codigo": "vulnerabilidade.servicos_indesejados", "pt": "Serviços acessíveis potencialmente indesejados", "en": "Potentially unwanted accessible services",
+         "ajuda_pt": "Serviços expostos à Internet que não deviam estar (ex.: RDP, Telnet, VNC).",
+         "ajuda_en": "Services exposed to the Internet that should not be (e.g. RDP, Telnet, VNC)."},
+        {"codigo": "vulnerabilidade.revelacao_informacao", "pt": "Revelação de informação", "en": "Information disclosure",
+         "ajuda_pt": "Serviço público que pode revelar informação sensível.",
+         "ajuda_en": "Public service that may disclose sensitive information."},
+        {"codigo": "vulnerabilidade.sistema_vulneravel", "pt": "Sistema vulnerável", "en": "Vulnerable system",
+         "ajuda_pt": "Sistema desatualizado ou mal configurado, vulnerável a ataques.",
+         "ajuda_en": "Outdated or misconfigured system, vulnerable to attacks."}
+      ]
+    },
+    {
+      "codigo": "outro",
+      "pt": "Outro",
+      "en": "Other",
+      "tipos": [
+        {"codigo": "outro.sem_tipo", "pt": "Sem tipo", "en": "Uncategorised",
+         "ajuda_pt": "Não cabe em nenhum dos tipos acima.",
+         "ajuda_en": "Does not fit any of the types above."},
+        {"codigo": "outro.indeterminado", "pt": "Indeterminado", "en": "Undetermined",
+         "ajuda_pt": "Ainda não se sabe o tipo.",
+         "ajuda_en": "The type is not known yet."}
+      ]
+    }
+  ],
+  "categorias_anteriores": {
+    "ransomware": "seguranca_informacao.modificacao_nao_autorizada",
+    "phishing": "fraude.phishing",
+    "fuga_dados": "seguranca_informacao.exfiltracao",
+    "indisponibilidade": "disponibilidade.interrupcao",
+    "acesso_indevido": "seguranca_informacao.acesso_nao_autorizado",
+    "malware": "codigo_malicioso.sistema_infetado",
+    "outro": "outro.sem_tipo"
+  }
+}

@@ -6,10 +6,9 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from sqlmodel import Session
 
-from app.auth.models import RoleUtilizador
 from app.controlos import service
 from app.controlos.schemas import (
     AlterarEstadoSchema,
@@ -20,15 +19,30 @@ from app.controlos.schemas import (
     DelegarControlosLoteSchema,
     DelegarControloSchema,
     DominioSchema,
+    MarcarNaoAplicavelSchema,
     RelatorioAuditoriaSchema,
     ReprovarControloSchema,
     ResultadoDelegacaoLoteSchema,
 )
 from app.database import get_session
-from app.shared.dependencies import CurrentUserDep, get_empresa_ativa, require_role
+from app.shared.capacidades import ClasseAcao, require_capability
+from app.shared.dependencies import CurrentUserDep, get_empresa_ativa
 from app.shared.utils import parse_accept_language
 
-router = APIRouter(tags=["Controlos"])
+# Quem pode a ação; sobre que controlo em concreto decide-se no service, com o
+# registo em mão (`exigir_ambito`).
+GovernarDep = Depends(require_capability("controlos", ClasseAcao.GOVERNAR))
+AprovarDep = Depends(require_capability("controlos", ClasseAcao.APROVAR))
+DelegarDep = Depends(require_capability("controlos", ClasseAcao.DELEGAR))
+VerDep = Depends(require_capability("controlos", ClasseAcao.VER))
+OperarDep = Depends(require_capability("controlos", ClasseAcao.OPERAR))
+
+# Chão de LEITURA para tudo o que este router serve — incluindo os scores por
+# domínio e o painel de maturidade, que respondiam a quem tivesse o módulo
+# fechado. Quem escreve também vê (é invariante da política), por isso o chão
+# não aperta nenhuma das ações abaixo; o que faz é impedir que uma rota nova
+# nasça sem qualquer verificação.
+router = APIRouter(tags=["Controlos"], dependencies=[VerDep])
 
 
 # ---------------------------------------------------------------------------
@@ -38,14 +52,14 @@ router = APIRouter(tags=["Controlos"])
 @router.get(
     "/dominios",
     response_model=list[DominioSchema],
-    summary="Listar domínios CyFun com scores",
+    summary="Listar os objetivos do referencial com scores",
 )
-async def listar_dominios(
+def listar_dominios(
     request: Request,
     utilizador: CurrentUserDep,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_session, scope="function"),
 ):
-    """Devolve os 5 domínios CyFun com o score de maturidade desta empresa."""
+    """Devolve os objetivos do referencial (6 no QNRCS) com o score de maturidade da empresa."""
     empresa = get_empresa_ativa(db, utilizador)
     locale = parse_accept_language(request.headers.get("accept-language"))
     return service.listar_dominios(db, empresa.id, empresa, locale=locale)
@@ -60,13 +74,13 @@ async def listar_dominios(
     response_model=DashboardScoreSchema,
     summary="Dashboard de maturidade",
 )
-async def dashboard(
+def dashboard(
     request: Request,
     utilizador: CurrentUserDep,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_session, scope="function"),
 ):
     """
-    Calcula scores globais, por domínio e controlos críticos em falta.
+    Calcula scores globais, por objetivo e controlos críticos em falta.
     Usado pelo spider chart e panel executivo (CEO).
     """
     empresa = get_empresa_ativa(db, utilizador)
@@ -87,12 +101,13 @@ async def dashboard(
     "/controlos",
     response_model=list[ControloListaSchema],
     summary="Listar controlos",
+    dependencies=[VerDep],
 )
-async def listar_controlos(
+def listar_controlos(
     request: Request,
     utilizador: CurrentUserDep,
     dominio_id: uuid.UUID | None = None,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_session, scope="function"),
 ):
     """
     Lista controlos UCF com estado da empresa.
@@ -111,12 +126,13 @@ async def listar_controlos(
     "/controlos/{controlo_id}",
     response_model=ControloDetalheSchema,
     summary="Detalhe de um controlo",
+    dependencies=[VerDep],
 )
-async def get_controlo(
+def get_controlo(
     controlo_id: uuid.UUID,
     request: Request,
     utilizador: CurrentUserDep,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_session, scope="function"),
 ):
     """Detalhe completo: guias, exemplos, checks e estado da empresa."""
     empresa = get_empresa_ativa(db, utilizador)
@@ -132,13 +148,14 @@ async def get_controlo(
     "/controlos/{controlo_empresa_id}/estado",
     response_model=ControloListaSchema,
     summary="Alterar estado de um controlo",
+    dependencies=[OperarDep],
 )
-async def alterar_estado(
+def alterar_estado(
     controlo_empresa_id: uuid.UUID,
     dados: AlterarEstadoSchema,
     request: Request,
     utilizador: CurrentUserDep,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_session, scope="function"),
 ):
     """
     Altera o estado de implementação.
@@ -160,6 +177,57 @@ async def alterar_estado(
 
 
 # ---------------------------------------------------------------------------
+# POST/DELETE /controlos/{controlo_empresa_id}/nao-aplicavel — scoping
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/controlos/{controlo_empresa_id}/nao-aplicavel",
+    response_model=ControloListaSchema,
+    summary="Marcar controlo como não aplicável (scoping de exclusão)",
+    dependencies=[GovernarDep],
+)
+def marcar_nao_aplicavel(
+    controlo_empresa_id: uuid.UUID,
+    dados: MarcarNaoAplicavelSchema,
+    request: Request,
+    utilizador: CurrentUserDep,
+    db: Session = Depends(get_session, scope="function"),
+):
+    """Exclui o controlo do âmbito: sai das contas de conformidade mas fica
+    visível, com a justificação registada e contestável pelo auditor."""
+    empresa = get_empresa_ativa(db, utilizador)
+    locale = parse_accept_language(request.headers.get("accept-language"))
+    service.marcar_nao_aplicavel(
+        db, controlo_empresa_id, empresa, utilizador, dados.justificacao, request
+    )
+    return service.get_controlo_lista_item(
+        db, empresa, utilizador, controlo_empresa_id, locale=locale
+    )
+
+
+@router.delete(
+    "/controlos/{controlo_empresa_id}/nao-aplicavel",
+    response_model=ControloListaSchema,
+    summary="Repor a aplicabilidade de um controlo",
+    dependencies=[GovernarDep],
+)
+def reaplicar_controlo(
+    controlo_empresa_id: uuid.UUID,
+    request: Request,
+    utilizador: CurrentUserDep,
+    db: Session = Depends(get_session, scope="function"),
+):
+    """Reverte o "não aplicável": o controlo volta a 'não iniciado' e reentra
+    em todas as contas de conformidade."""
+    empresa = get_empresa_ativa(db, utilizador)
+    locale = parse_accept_language(request.headers.get("accept-language"))
+    service.reaplicar_controlo(db, controlo_empresa_id, empresa, utilizador, request)
+    return service.get_controlo_lista_item(
+        db, empresa, utilizador, controlo_empresa_id, locale=locale
+    )
+
+
+# ---------------------------------------------------------------------------
 # POST /controlos/{controlo_empresa_id}/checks/{check_id}/concluir
 # ---------------------------------------------------------------------------
 
@@ -167,13 +235,14 @@ async def alterar_estado(
     "/controlos/{controlo_empresa_id}/checks/{check_id}/concluir",
     status_code=status.HTTP_200_OK,
     summary="Marcar check como concluído",
+    dependencies=[OperarDep],
 )
-async def concluir_check(
+def concluir_check(
     controlo_empresa_id: uuid.UUID,
     check_id: uuid.UUID,
     request: Request,
     utilizador: CurrentUserDep,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_session, scope="function"),
 ):
     """
     Marca um check de maturidade como concluído e recalcula o nível do controlo.
@@ -193,13 +262,14 @@ async def concluir_check(
     "/controlos/{controlo_empresa_id}/checks/{check_id}/concluir",
     status_code=status.HTTP_200_OK,
     summary="Reverter check para não concluído",
+    dependencies=[OperarDep],
 )
-async def reverter_check(
+def reverter_check(
     controlo_empresa_id: uuid.UUID,
     check_id: uuid.UUID,
     request: Request,
     utilizador: CurrentUserDep,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_session, scope="function"),
 ):
     """Reverte um check para não concluído e recalcula o nível."""
     empresa = get_empresa_ativa(db, utilizador)
@@ -217,21 +287,31 @@ async def reverter_check(
     "/controlos/{controlo_empresa_id}/aprovar",
     status_code=status.HTTP_200_OK,
     summary="Aprovar controlo",
-    dependencies=[Depends(require_role(RoleUtilizador.AUDITOR))],
+    dependencies=[AprovarDep],
 )
-async def aprovar(
+def aprovar(
     controlo_empresa_id: uuid.UUID,
     dados: AprovarControloSchema,
     request: Request,
     utilizador: CurrentUserDep,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_session, scope="function"),
 ):
     """Aprova um controlo marcado como 'implementado'. Apenas auditores."""
     empresa = get_empresa_ativa(db, utilizador)
-    service.aprovar_controlo(
+    ce = service.aprovar_controlo(
         db, controlo_empresa_id, empresa, utilizador, dados.texto_relatorio, request
     )
-    return {"mensagem": "Controlo aprovado com sucesso."}
+    resposta: dict = {"mensagem": "Controlo aprovado com sucesso."}
+    # Aprovado abaixo do nível que o perfil exige: a aprovação vale, mas quem
+    # aprovou fica a sabê-lo (e a auditoria também).
+    nivel_minimo = service.nivel_minimo_do_controlo(db, ce, empresa)
+    if ce.nivel_maturidade_atual < nivel_minimo:
+        resposta["aviso"] = {
+            "codigo": "nivel_abaixo_do_minimo",
+            "nivel_atual": ce.nivel_maturidade_atual,
+            "nivel_minimo": nivel_minimo,
+        }
+    return resposta
 
 
 # ---------------------------------------------------------------------------
@@ -242,14 +322,14 @@ async def aprovar(
     "/controlos/{controlo_empresa_id}/reprovar",
     status_code=status.HTTP_200_OK,
     summary="Reprovar controlo",
-    dependencies=[Depends(require_role(RoleUtilizador.AUDITOR))],
+    dependencies=[AprovarDep],
 )
-async def reprovar(
+def reprovar(
     controlo_empresa_id: uuid.UUID,
     dados: ReprovarControloSchema,
     request: Request,
     utilizador: CurrentUserDep,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_session, scope="function"),
 ):
     """Reprova um controlo. Apenas auditores."""
     empresa = get_empresa_ativa(db, utilizador)
@@ -273,11 +353,12 @@ async def reprovar(
     "/controlos/{controlo_empresa_id}/relatorios-auditoria",
     response_model=list[RelatorioAuditoriaSchema],
     summary="Histórico de relatórios de auditoria",
+    dependencies=[VerDep],
 )
-async def historico_relatorios(
+def historico_relatorios(
     controlo_empresa_id: uuid.UUID,
     utilizador: CurrentUserDep,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_session, scope="function"),
     limite: int | None = Query(None, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ):
@@ -302,13 +383,13 @@ async def historico_relatorios(
     response_model=ResultadoDelegacaoLoteSchema,
     status_code=status.HTTP_200_OK,
     summary="Delegar múltiplos controlos de uma vez",
-    dependencies=[Depends(require_role(RoleUtilizador.ADMIN, RoleUtilizador.SUBADMIN))],
+    dependencies=[DelegarDep],
 )
-async def delegar_lote(
+def delegar_lote(
     dados: DelegarControlosLoteSchema,
     request: Request,
     utilizador: CurrentUserDep,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_session, scope="function"),
 ):
     """Aplica delegações e remoções de delegação numa única operação."""
     empresa = get_empresa_ativa(db, utilizador)
@@ -328,14 +409,14 @@ async def delegar_lote(
     "/controlos/{controlo_empresa_id}/delegar",
     status_code=status.HTTP_200_OK,
     summary="Delegar controlo a implementador",
-    dependencies=[Depends(require_role(RoleUtilizador.ADMIN, RoleUtilizador.SUBADMIN))],
+    dependencies=[DelegarDep],
 )
-async def delegar(
+def delegar(
     controlo_empresa_id: uuid.UUID,
     dados: DelegarControloSchema,
     request: Request,
     utilizador: CurrentUserDep,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_session, scope="function"),
 ):
     """
     Atribui (ou remove) delegação de um controlo a um implementador.

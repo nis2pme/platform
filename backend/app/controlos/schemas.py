@@ -42,6 +42,12 @@ class ControloListaSchema(BaseModel):
     dominio_id: uuid.UUID
     dominio_codigo: str
     dominio_nome: str = ""
+    # Nível intermédio da hierarquia do referencial (domínio > subdomínio >
+    # controlo). O detalhe já o expunha; a listagem precisa dele para conseguir
+    # apresentar os controlos agrupados sem pedir o detalhe de cada um.
+    subdomain_id: uuid.UUID | None = None
+    subdomain_codigo: str | None = None
+    subdomain_nome: str | None = None
     ordem: int
 
     # Estado corrente da empresa (injected em service)
@@ -49,6 +55,11 @@ class ControloListaSchema(BaseModel):
     estado: EstadoControlo | None = None
     nivel_maturidade_atual: int = 0
     nivel_minimo: int = 2          # nível mínimo exigido para esta empresa
+    # Nível em que o controlo começa (o mais baixo dos seus sub-requisitos).
+    # Não depende da empresa: é o que o filtro por nível usa, para que "Substancial"
+    # mostre os controlos que entram nesse nível e não os que a empresa tem de
+    # levar ao nível 2.
+    nivel_inicial: int | None = None
     em_conformidade: bool = False
     score_conformidade: float = 0.0     # 0.0–1.0 fórmula contínua ponderada
     obrigatorio_perfil: bool = True
@@ -82,26 +93,33 @@ class ControloNivelCheckSchema(BaseModel):
 
 class RelatorioAuditoriaSchema(BaseModel):
     id: uuid.UUID
-    auditor_id: uuid.UUID
+    # Vazio nos relatórios externos (o auditor não é utilizador da app).
+    auditor_id: uuid.UUID | None = None
     auditor_nome: str
     decisao: DecisaoAuditor
     texto: str
     created_at: datetime
+    # Relatório importado de um parecer assinado de auditor externo.
+    externo: bool = False
+    estado_externo: str | None = None
 
     model_config = {"from_attributes": True}
 
     @model_validator(mode="before")
     @classmethod
     def decifrar_campos_pii(cls, data):
+        """Decifra os campos cifrados em repouso antes da validação.
+
+        Copia os atributos para um dict em vez de mutar a entidade ORM recebida:
+        mutar o objeto persistente faria o commit automático do get_session regravar
+        os campos DECIFRADOS (em claro) na base — corrompia a cifra em repouso.
+        """
         from app.shared.pii import decifrar_pii
-        if hasattr(data, "auditor_nome"):
-            object.__setattr__(data, "auditor_nome", decifrar_pii(getattr(data, "auditor_nome")))
-            object.__setattr__(data, "texto", decifrar_pii(getattr(data, "texto")))
-        elif isinstance(data, dict):
-            if "auditor_nome" in data:
-                data["auditor_nome"] = decifrar_pii(data["auditor_nome"])
-            if "texto" in data:
-                data["texto"] = decifrar_pii(data["texto"])
+        if not isinstance(data, dict):
+            data = {k: getattr(data, k) for k in cls.model_fields if hasattr(data, k)}
+        for campo in ("auditor_nome", "texto"):
+            if data.get(campo) is not None:
+                data[campo] = decifrar_pii(data[campo])
         return data
 
 
@@ -150,6 +168,12 @@ class ControloDetalheSchema(BaseModel):
     aprovado_por_nome: str | None = None
     data_aprovacao: datetime | None = None
 
+    # Estado "não aplicável" (scoping): justificação + autoria, visíveis a todos
+    # (incluindo o auditor — a exclusão é contestável).
+    na_justificacao: str | None = None
+    na_definido_em: datetime | None = None
+    na_definido_por_nome: str | None = None
+
     # Relatório de auditoria mais recente (informação rápida no detalhe)
     ultimo_relatorio_auditoria: RelatorioAuditoriaSchema | None = None
 
@@ -183,6 +207,12 @@ class AlterarEstadoSchema(BaseModel):
                 "Use os endpoints /aprovar ou /reprovar para aprovação."
             )
         return v
+
+
+class MarcarNaoAplicavelSchema(BaseModel):
+    """Pedido de exclusão de âmbito — a justificação é obrigatória."""
+
+    justificacao: str = Field(min_length=10, max_length=5000)
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +274,9 @@ class ResumoControlosSchema(BaseModel):
     em_progresso: int
     implementados: int
     aprovados: int
+    # Exclusões de âmbito SEMPRE visíveis no dashboard (anti-abuso: marcar
+    # controlos como não aplicáveis nunca passa despercebido).
+    nao_aplicaveis: int = 0
 
 
 class DashboardScoreSchema(BaseModel):

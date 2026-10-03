@@ -7,7 +7,11 @@ por token partilhado (`hmac.compare_digest`); sem ele responde 404 — não reve
 existência do endpoint. O `X-Actor` (informativo) identifica quem ordenou, para
 auditoria do core.
 
-Suspender/reativar (`CORE_SUSPEND_TOKEN`).
+Só suspender trials (`CORE_SUSPEND_TOKEN`). O token vive no relógio do trial, que
+tem saída para a Internet; por isso esta superfície faz só o que ele precisa.
+Reativar uma empresa é do operador, no superadmin, que confere antes o estado do
+trial na borda — uma rota de reativação aqui desfazia, com o token do relógio,
+suspensões decididas pelo operador.
 """
 import hmac
 import uuid
@@ -39,19 +43,16 @@ def _exigir_token(x_internal_token: str = Header(default=None, alias="X-Internal
 def suspender_empresa(
     empresa_id: uuid.UUID,
     request: Request,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_session, scope="function"),
     x_actor: str = Header(default="desconhecido", alias="X-Actor"),
 ) -> dict:
+    # Este caminho é o relógio do trial (a borda de registo). Um cliente que já
+    # passou a plano pago — ou que nem tem plano — não se suspende por ele: a
+    # borda marca-o como convertido. A suspensão manual é do superadmin.
+    from app.empresas.models import Empresa
+
+    atual = db.get(Empresa, empresa_id)
+    if atual is not None and atual.plano != "trial":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"codigo": "nao_e_trial"})
     empresa = service.definir_suspensao(db, empresa_id, True, x_actor, request)
-    return {"empresa_id": str(empresa.id), "suspenso": empresa.suspenso}
-
-
-@router.post("/empresas/{empresa_id}/reativar", dependencies=[Depends(_exigir_token)])
-def reativar_empresa(
-    empresa_id: uuid.UUID,
-    request: Request,
-    db: Session = Depends(get_session),
-    x_actor: str = Header(default="desconhecido", alias="X-Actor"),
-) -> dict:
-    empresa = service.definir_suspensao(db, empresa_id, False, x_actor, request)
     return {"empresa_id": str(empresa.id), "suspenso": empresa.suspenso}

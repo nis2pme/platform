@@ -19,11 +19,11 @@ from sqlmodel import Session, select
 
 from app.config import get_settings
 from app.empresas.models import Empresa
-from app.evidencias.models import Evidencia
+from app.evidencias.models import Evidencia, EvidenciaRequisito
 from app.evidencias.service import _decifrar_texto_evidencia
 from app.frameworks.models import Control, ControloEmpresaV2, Framework
 from app.frameworks.runtime import load_thresholds_map, resolver_framework_empresa
-from app.premium.sealing import cifrar_envelope
+from app.premium.sealing import cifrar_envelope, maximo_em_claro
 from app.shared.pii import decifrar_pii
 from app.shared.utils import resolver_locale
 
@@ -67,6 +67,76 @@ def _construir_meta(
     }
 
 
+# O que o gateway lê quando uma evidência (ou parte dela) não coube no envelope.
+_MARCA_EXCLUIDO = "limite de tamanho do payload atingido"
+
+
+def _json(valor) -> bytes:
+    return json.dumps(valor, ensure_ascii=False).encode("utf-8")
+
+
+def _base64_maximo(ev: Evidencia) -> int:
+    """Até quantos bytes ocupa o ficheiro da evidência em base64, sem o ler.
+
+    Cifrado, o ficheiro em disco é um token Fernet: o próprio conteúdo cifrado já
+    em base64, com ~57 bytes a mais. Por isso o tamanho em disco é um majorante
+    do base64 do conteúdo decifrado. Em claro, é o base64 do próprio ficheiro."""
+    tamanho = os.path.getsize(ev.ficheiro_path)
+    if ev.ficheiro_cifrado and settings.EVIDENCE_ENCRYPTION_KEY:
+        return tamanho
+    return 4 * -(-tamanho // 3)
+
+
+def _item_da_evidencia(ev: Evidencia, cabe: int) -> list[bytes] | None:
+    """As partes do item JSON da evidência, que somam no máximo `cabe` bytes.
+
+    Entra o texto se couber; depois o ficheiro, se couber no que sobra — e um
+    ficheiro que não cabe nem sequer se lê. O que fica de fora é marcado, para o
+    modelo saber que a evidência existe. None se nem o item mínimo couber."""
+    partes = [b'{"tipo":' + _json(ev.tipo.value) + b',"titulo":' + _json(ev.titulo)]
+    tamanho = len(partes[0]) + 1  # + o "}" do fim
+    marca_ficheiro = b',"ficheiro_excluido":' + _json(_MARCA_EXCLUIDO)
+    marca_texto = b',"conteudo_excluido":' + _json(_MARCA_EXCLUIDO)
+    tem_ficheiro = bool(ev.ficheiro_path) and os.path.isfile(ev.ficheiro_path)
+    reserva = len(marca_ficheiro) if tem_ficheiro else 0
+    # O mínimo: o cabeçalho, e as marcas do que pode ficar de fora.
+    if tamanho + reserva + (len(marca_texto) if ev.conteudo_texto else 0) > cabe:
+        return None
+
+    if ev.conteudo_texto:
+        texto = ev.conteudo_texto
+        if ev.conteudo_texto_cifrado and settings.EVIDENCE_ENCRYPTION_KEY:
+            texto = _decifrar_texto_evidencia(texto)
+        valor = _json(texto)
+        del texto
+        nome = b',"conteudo_texto":'
+        if tamanho + len(nome) + len(valor) + reserva <= cabe:
+            partes += [nome, valor]
+            tamanho += len(nome) + len(valor)
+        else:
+            partes.append(marca_texto)
+            tamanho += len(marca_texto)
+        del valor
+
+    if tem_ficheiro:
+        cabeca = (b',"ficheiro_nome":' + _json(decifrar_pii(ev.ficheiro_nome))
+                  + b',"ficheiro_tipo":' + _json(ev.ficheiro_tipo) + b',"ficheiro_base64":"')
+        if tamanho + len(cabeca) + _base64_maximo(ev) + 1 <= cabe:
+            with open(ev.ficheiro_path, "rb") as fh:
+                raw = fh.read()
+            if ev.ficheiro_cifrado and settings.EVIDENCE_ENCRYPTION_KEY:
+                from app.evidencias.service import decifrar_bytes_evidencia
+
+                raw = decifrar_bytes_evidencia(raw)
+            partes += [cabeca, base64.b64encode(raw), b'"']
+            del raw
+        else:
+            partes.append(marca_ficheiro)
+
+    partes.append(b"}")
+    return partes
+
+
 def _construir_payload_evidencias(
     db: Session,
     ce: ControloEmpresaV2,
@@ -78,58 +148,66 @@ def _construir_payload_evidencias(
 
     O caller deriva a `idempotency_key` deste plaintext (conteúdo estável) e só
     depois sela em envelope — hashear o ciphertext não serviria (o sealed box é
-    não-determinístico). Evidências tal como estão (texto + ficheiros).
+    não-determinístico). Evidências tal como estão (texto + ficheiros), pela
+    ordem em que foram criadas, até ao que cabe no envelope.
     """
+    # As evidências de um controlo são as que lhe estão LIGADAS. Pela coluna
+    # antiga, a análise recebia menos provas do que o controlo tem — e concluiria
+    # sobre um controlo sem ver a política partilhada que o sustenta. A ordem é
+    # fixa: a mesma lista dá o mesmo payload e a mesma chave de idempotência (sem
+    # ORDER BY, o Postgres pode devolver as linhas por outra ordem, e a dedup
+    # falhava).
     evidencias = db.exec(
-        select(Evidencia).where(
-            Evidencia.controlo_empresa_v2_id == ce.id,
+        select(Evidencia)
+        .join(EvidenciaRequisito, EvidenciaRequisito.evidencia_id == Evidencia.id)
+        .where(
+            EvidenciaRequisito.requisito_id == ce.id,
+            EvidenciaRequisito.desligado_em.is_(None),
             Evidencia.empresa_id == empresa.id,
             Evidencia.deleted_at.is_(None),
         )
+        .order_by(Evidencia.created_at, Evidencia.id)
     ).all()
 
-    items: list[dict] = []
-    total_bytes = 0
-    limite = settings.PREMIUM_EVIDENCE_MAX_BYTES
-
-    for ev in evidencias:
-        item: dict = {"tipo": ev.tipo.value, "titulo": ev.titulo}
-
-        if ev.conteudo_texto:
-            texto = ev.conteudo_texto
-            if ev.conteudo_texto_cifrado and settings.EVIDENCE_ENCRYPTION_KEY:
-                texto = _decifrar_texto_evidencia(texto)
-            item["conteudo_texto"] = texto
-
-        if ev.ficheiro_path and os.path.isfile(ev.ficheiro_path):
-            with open(ev.ficheiro_path, "rb") as fh:
-                raw = fh.read()
-            if ev.ficheiro_cifrado and settings.EVIDENCE_ENCRYPTION_KEY:
-                from cryptography.fernet import Fernet
-
-                raw = Fernet(settings.EVIDENCE_ENCRYPTION_KEY.encode()).decrypt(raw)
-            total_bytes += len(raw)
-            if total_bytes > limite:
-                item["ficheiro_excluido"] = "limite de tamanho do payload atingido"
-            else:
-                item["ficheiro_nome"] = decifrar_pii(ev.ficheiro_nome)
-                item["ficheiro_tipo"] = ev.ficheiro_tipo
-                item["ficheiro_base64"] = base64.b64encode(raw).decode("ascii")
-
-        items.append(item)
-
-    return json.dumps(
-        {"controlo_codigo": controlo_codigo, "evidencias": items}, ensure_ascii=False
-    ).encode("utf-8")
+    # O payload monta-se já em bytes, item a item, e conta-se à medida: o que
+    # já não cabe no envelope fica de fora (e marcado) — sem isto, o envelope
+    # passava dos tetos do sidecar, do gateway e da borda, e a análise falhava
+    # depois de gastar memória a montá-lo. Nenhuma evidência pequena fica de
+    # fora por causa de uma grande que veio antes.
+    inicio = b'{"controlo_codigo":' + _json(controlo_codigo) + b',"evidencias":['
+    fim = b"]}"
+    partes = [inicio]
+    usado = len(inicio) + len(fim)
+    teto = maximo_em_claro()
+    for n, ev in enumerate(evidencias):
+        separador = b"," if n else b""
+        item = _item_da_evidencia(ev, teto - usado - len(separador))
+        if item is None:
+            break
+        if separador:
+            partes.append(separador)
+        partes += item
+        usado += len(separador) + sum(len(p) for p in item)
+    partes.append(fim)
+    return b"".join(partes)
 
 
 def _idempotency_key(ce_id: uuid.UUID, payload_plaintext: bytes) -> str:
     """
-    Chave de idempotência gerada pelo core: controlo + hash do conteúdo. Reenvio do
-    mesmo controlo com as mesmas evidências → o sidecar/gateway desduplicam (sem
+    Chave de idempotência gerada pelo core: controlo + impressão do conteúdo. Reenvio
+    do mesmo controlo com as mesmas evidências → o sidecar/gateway desduplicam (sem
     re-correr o LLM). Evidências alteradas mudam a chave → nova análise (correto).
+
+    A chave sai da instalação (vai ao gateway do fornecedor): é um HMAC com um
+    pepper local e não um SHA-256 simples, para que quem a veja não possa confirmar
+    se umas evidências que adivinhe são as desta empresa.
     """
-    h = hashlib.sha256()
+    import hmac
+
+    from app.shared.hashes import _get_pepper
+
+    pepper = _get_pepper(b"ia-idempotencia")
+    h = hmac.new(pepper, digestmod=hashlib.sha256) if pepper else hashlib.sha256()
     h.update(str(ce_id).encode("utf-8"))
     h.update(b":")
     h.update(payload_plaintext)

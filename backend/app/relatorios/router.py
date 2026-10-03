@@ -5,40 +5,31 @@ Geração de relatórios de conformidade NIS2 / DL 125/2025.
 Prefixo base: /api (incluído em main.py)
 Prefixo do router: /relatorios
 """
-from fastapi import APIRouter, Depends, Request
+from datetime import datetime, timezone
 
-from app.auth.models import RoleUtilizador
-from app.shared.dependencies import CurrentUserDep, SessionDep, get_empresa_ativa, require_role
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
+
+from app.premium import exportacao as exportacao_premium
+from app.premium.exportacao_client import ExportacaoClient, get_exportacao_client
+from app.shared.audit import Acao, ResultadoAcao, registar_acao
+from app.shared.capacidades import ClasseAcao, require_capability
+from app.shared.dependencies import CurrentUserDep, SessionDep, get_empresa_ativa
 from app.relatorios import schemas, service
 
 
 router = APIRouter(prefix="/relatorios", tags=["Relatórios"])
 
 # ---------------------------------------------------------------------------
-# Dependências de role
+# Dependências de acesso
 # ---------------------------------------------------------------------------
 
-# CEO, admin, subadmin e auditor acedem a todos os relatórios de leitura
-RelatorioReadDep = Depends(
-    require_role(RoleUtilizador.ADMIN, RoleUtilizador.SUBADMIN, RoleUtilizador.AUDITOR, RoleUtilizador.CEO)
-)
+RelatorioReadDep = Depends(require_capability("relatorios", ClasseAcao.VER))
 
-# Histórico semanal do dashboard — disponível a todos os perfis autenticados
-HistoricoReadDep = Depends(
-    require_role(
-        RoleUtilizador.ADMIN,
-        RoleUtilizador.SUBADMIN,
-        RoleUtilizador.AUDITOR,
-        RoleUtilizador.CEO,
-        RoleUtilizador.IMPLEMENTADOR,
-    )
-)
+# Exportação estruturada (RGPD): sai mais dados da aplicação do que numa leitura,
+# por isso é classe própria e não a mesma do "ver".
+ExportarDep = Depends(require_capability("relatorios", ClasseAcao.EXPORTAR))
 
-# Apenas admin, subadmin e auditor acedem ao gap e conformidade detalhada
-GapReadDep = Depends(require_role(RoleUtilizador.ADMIN, RoleUtilizador.SUBADMIN, RoleUtilizador.AUDITOR))
-
-# Apenas admin e subadmin podem exportar dados RGPD
-AdminDep = Depends(require_role(RoleUtilizador.ADMIN, RoleUtilizador.SUBADMIN))
 
 
 # ---------------------------------------------------------------------------
@@ -50,7 +41,7 @@ AdminDep = Depends(require_role(RoleUtilizador.ADMIN, RoleUtilizador.SUBADMIN))
     "/conformidade",
     response_model=schemas.RelatorioConformidadeSchema,
     summary="Relatório detalhado de conformidade",
-    dependencies=[GapReadDep],
+    dependencies=[RelatorioReadDep],
 )
 def relatorio_conformidade(
     db: SessionDep,
@@ -58,9 +49,10 @@ def relatorio_conformidade(
     request: Request,
 ):
     """
-    Relatório completo de conformidade NIS2 / DL 125/2025.
-    Mostra todos os domínios, controlos, níveis atuais e gaps.
-    Disponível para admin e auditor.
+    Relatório completo de conformidade NIS2.
+    Mostra todos os objetivos, controlos, níveis atuais e gaps.
+    Disponível à administração, ao auditor e ao órgão de gestão — que é quem
+    responde pela aprovação das medidas.
     """
     empresa = get_empresa_ativa(db, utilizador_atual)
     return service.gerar_relatorio_conformidade(
@@ -69,10 +61,29 @@ def relatorio_conformidade(
 
 
 @router.get(
+    "/matriz-capacidades",
+    summary="Documento de funções e responsabilidades (GR.FR-3)",
+    dependencies=[RelatorioReadDep],
+)
+def relatorio_matriz_capacidades(request: Request, utilizador: CurrentUserDep):
+    """
+    Documento-evidência da matriz de capacidades (quem pode o quê por módulo).
+    Serve o registo documentado de funções e responsabilidades (QNRCS GR.FR-3).
+    Payload localizado no formato dos documentos-evidência; o PDF é gerado no cliente.
+    """
+    from app.shared.capacidades import documento_matriz_capacidades
+    from app.shared.i18n import locale_de_request
+
+    return documento_matriz_capacidades(
+        locale_de_request(request), utilizador.empresa_id
+    )
+
+
+@router.get(
     "/gap",
     response_model=schemas.RelatorioGapSchema,
     summary="Análise de lacunas (gap analysis)",
-    dependencies=[GapReadDep],
+    dependencies=[RelatorioReadDep],
 )
 def relatorio_gap(
     db: SessionDep,
@@ -82,7 +93,6 @@ def relatorio_gap(
     """
     Lista de controlos não conformes ordenados por prioridade.
     Ferramenta de trabalho para planeamento da implementação.
-    Disponível para admin e auditor.
     """
     empresa = get_empresa_ativa(db, utilizador_atual)
     return service.gerar_relatorio_gap(
@@ -94,7 +104,12 @@ def relatorio_gap(
     "/historico",
     response_model=schemas.HistoricoDashboardSchema,
     summary="Histórico semanal global para o dashboard",
-    dependencies=[HistoricoReadDep],
+    # A série é a conformidade da EMPRESA, e é isso que a leitura de relatórios
+    # decide quem alcança — sem este gate, quem tem os relatórios fechados via
+    # na mesma a evolução global pelo painel. Quem fica sem ela vê o painel
+    # sem o gráfico (o carregamento degrada sozinho), e a organização pode
+    # abri-la a quem implementa pela política de permissões.
+    dependencies=[RelatorioReadDep],
 )
 def relatorio_historico(
     db: SessionDep,
@@ -164,7 +179,7 @@ def historico_exportacoes(
     "/exportar-dados",
     response_model=schemas.ExportacaoDadosSchema,
     summary="Exportar dados da empresa (RGPD Art. 20)",
-    dependencies=[AdminDep],
+    dependencies=[ExportarDep],
 )
 def exportar_dados(
     db: SessionDep,
@@ -180,4 +195,48 @@ def exportar_dados(
     empresa = get_empresa_ativa(db, utilizador_atual)
     return service.exportar_dados_empresa(
         db, empresa, utilizador_atual, request=request
+    )
+
+
+@router.get(
+    "/exportar-dados/premium",
+    summary="Exportar os dados dos módulos premium (zip)",
+    dependencies=[ExportarDep],
+)
+def exportar_dados_premium(
+    db: SessionDep,
+    utilizador_atual: CurrentUserDep,
+    request: Request,
+    cli: ExportacaoClient | None = Depends(get_exportacao_client),
+):
+    """
+    Os dados dos módulos premium da empresa (inventário, riscos, fornecedores,
+    importações, conetores sem credenciais, verificações, análises de IA), num
+    zip com JSON e CSV. Os dados são do cliente: sai em qualquer estado da
+    licença, por isso não passa pelo portão premium — só pela capacidade de
+    exportar, a mesma da exportação RGPD ao lado. A empresa é sempre a da
+    sessão. Sai em stream (o zip faz-se à medida que os dados chegam).
+    """
+    empresa = get_empresa_ativa(db, utilizador_atual)
+    if cli is None:
+        # Instalação sem o componente premium: não há dados premium a exportar.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"codigo": "sem_premium"})
+    # A primeira parte pede-se já: uma recusa do sidecar (ocupado, em baixo)
+    # sai como erro HTTP, antes de a resposta começar e de ficar na trilha.
+    partes = exportacao_premium.abrir(cli.partes_de(str(empresa.id)))
+    registar_acao(
+        db,
+        acao=Acao.EMPRESA_DADOS_EXPORTADOS,
+        resultado=ResultadoAcao.SUCESSO,
+        empresa_id=empresa.id,
+        utilizador_id=utilizador_atual.id,
+        dados_novos={"tipo": "exportacao_premium"},
+        request=request,
+    )
+    db.commit()
+    nome = f"dados_premium_{datetime.now(timezone.utc).date().isoformat()}.zip"
+    return StreamingResponse(
+        exportacao_premium.zip_em_stream(partes),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{nome}"', "Cache-Control": "no-store"},
     )

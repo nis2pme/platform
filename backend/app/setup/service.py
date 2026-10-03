@@ -8,13 +8,14 @@ from datetime import datetime, timezone
 from fastapi import HTTPException, Request, status
 from sqlmodel import Session, func, select
 
-from app.auth.models import RoleUtilizador, Utilizador
+from app.auth.models import RoleUtilizador, Utilizador, registar_adesao
 from app.auth.service import criar_temp_token, hash_password
 from app.config import get_settings
 from app.empresas.models import DimensaoEmpresa, Empresa, NivelQNRCS, TipoEntidade
 from app.setup.schemas import SetupConfigurarSchema
 from app.shared.audit import Acao, ResultadoAcao, registar_acao
 from app.shared.pii import cifrar_pii
+from app.shared.politica_seguranca import exigir_password_valida
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -89,6 +90,9 @@ def executar_setup(
             detail=f"Nível de conformidade QNRCS inválido: {dados.empresa_nivel_qnrcs}",
         )
 
+    # Primeira empresa: ainda não tem política, vale o mínimo da plataforma.
+    exigir_password_valida(dados.admin_password)
+
     # Criar empresa
     empresa = Empresa(
         nome=cifrar_pii(dados.empresa_nome),
@@ -116,6 +120,7 @@ def executar_setup(
     )
     db.add(admin)
     db.flush()
+    registar_adesao(db, admin)
 
     # Inicializar controlos da empresa
     from app.controlos.service import inicializar_controlos_empresa

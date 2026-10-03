@@ -21,11 +21,128 @@ service PremiumProvider {
   rpc CriarAnaliseGaps (stream ChunkContexto) returns (AnaliseJob);
   // Estado/resultado do job mais recente de um controlo (o sidecar é dono do job).
   rpc ObterAnalisePorControlo (AnaliseControloRef) returns (AnaliseJob);
+
+  // Estado agregado da licença do tenant, para o cartão de licença no UI. NÃO é
+  // por-feature: descreve o termo global e a janela de tolerância. Só o sidecar
+  // conhece a expiração e o grace de forma limpa (ficheiro Ed25519 no on-prem).
+  rpc EstadoLicenca (EstadoLicencaReq) returns (EstadoLicencaResp);
+  // Instala (ou só valida, com `so_validar`) um ficheiro de licença colado pelo
+  // administrador (on-prem). O sidecar verifica assinatura, instância, NIF e
+  // validade, grava o ficheiro e recarrega os direitos sem reiniciar.
+  rpc InstalarLicenca (InstalarLicencaReq) returns (InstalarLicencaResp);
+  // Testemunho externo da trilha de auditoria (on-prem): o core entrega as cabeças
+  // atuais das cadeias — seguem no heartbeat seguinte, assinadas pela instalação —
+  // e recebe as que o fornecedor testemunhou no último heartbeat aceite.
+  rpc TestemunharTrilha (TestemunharTrilhaReq) returns (TestemunharTrilhaResp);
+}
+
+message CabecaTrilha {
+  // "plataforma" ou o id da empresa.
+  string ambito = 1;
+  int64 sequencia = 2;
+  // SHA-256 em hex minúsculo.
+  string head_hash = 3;
+}
+
+message TestemunharTrilhaReq {
+  repeated CabecaTrilha cabecas = 1;
+}
+
+message TestemunharTrilhaResp {
+  // O que o fornecedor testemunhou no último heartbeat aceite (vazio sem testemunho).
+  repeated CabecaTrilha testemunhadas = 1;
+  // Hora do fornecedor, assinada no recibo (RFC3339); vazio sem testemunho.
+  string testemunhadas_em = 2;
+  // false quando a instalação não manda heartbeats (SaaS, air-gap).
+  bool ativo = 3;
+}
+
+message EstadoLicencaReq {
+  // Tenant a consultar (empresa_id). Em on-prem é também a empresa do código de
+  // instalação; outra empresa que não a da licença, ou vazio, dá "invalida".
+  string tenant_id = 1;
+  // NIF da empresa (decifrado pelo core), só para compor o código de instalação.
+  // O sidecar não o guarda. Vazio = código sem NIF.
+  string nif = 2;
+}
+
+message EstadoLicencaResp {
+  // Estado para o cartão. Valores possíveis (o frontend mapeia por i18n, como faz
+  // com o `reason` do EntitlementResult):
+  //   "ativa"      — válida e dentro do prazo;
+  //   "em_grace"   — expirada mas ainda dentro da janela de tolerância (opera);
+  //   "expirada"   — para lá do grace (módulos só de leitura, sem limite de tempo);
+  //   "invalida"   — sem licença, assinatura inválida ou instância errada;
+  //   "gerida"     — saas: subscrição gerida pelo fornecedor (sem termo local);
+  //   "sem_premium"— sem módulo premium configurado.
+  string estado = 1;
+  // Plano nominal, se conhecido (ex.: "premium"). Vazio = desconhecido/n.a.
+  string plano = 2;
+  // Termo da licença (RFC3339). Vazio = sem expiração / não aplicável.
+  string expires_at = 3;
+  // Fim da tolerância = expires_at + grace_seconds (RFC3339). Vazio se não aplicável.
+  string grace_ate = 4;
+  // Dias até expires_at (negativo se já expirou; 0 se sem expiração). Informativo.
+  int64 dias_restantes = 5;
+  // Código de instalação (on-prem): identidade da instalação + empresa + NIF,
+  // reversível, com soma de verificação — o que o cliente envia ao fornecedor
+  // para obter ou renovar a licença. Vazio em SaaS.
+  string codigo_instalacao = 6;
+  // Identidade da instalação (UUID), informativa. Vazio em SaaS.
+  string instance_id = 7;
+  // Validação pelo serviço de licenças (on-prem): "ok" | "em_falta" (a caminho
+  // da tolerância) | "so_leitura" (tolerância esgotada, ou a aguardar a primeira
+  // validação: consultar continua, escrever e IA param) | "nao_validada" (sem
+  // validação provada para lá do prazo contado da emissão, ou estado guardado
+  // ilegível: só de leitura) | "revogada" (só de leitura) | "airgap". Vazio em SaaS.
+  string heartbeat_estado = 8;
+  // Último heartbeat aceite (RFC3339). Vazio se nunca.
+  string heartbeat_ultimo_ok = 9;
+  // Dias desde o último heartbeat aceite (relógio monótono).
+  int64 dias_sem_heartbeat = 10;
+  // Os módulos premium estão só de leitura: os dados leem-se e exportam-se, as
+  // escritas e a IA param. Sem limite de tempo; volta ao normal quando a licença
+  // voltar a valer (renovada, reativada, validada).
+  bool so_leitura = 11;
+  // Porquê, quando `so_leitura`: "revogada" | "expirada" | "nao_validada" |
+  // "sem_validacao" (validada, mas há demasiados dias sem contacto). Vazio de resto.
+  string so_leitura_motivo = 12;
+}
+
+message InstalarLicencaReq {
+  // Envelope `{payload_b64, sig}` tal como foi emitido (texto JSON).
+  string envelope_json = 1;
+  // NIF da empresa (decifrado pelo core) — tem de coincidir com o da licença.
+  string nif = 2;
+  // true = pré-visualizar sem gravar (o administrador confirma antes).
+  bool so_validar = 3;
+  // Empresa que instala (empresa_id) — tem de ser a da licença (a do código de
+  // instalação).
+  string tenant_id = 4;
+}
+
+message InstalarLicencaResp {
+  bool aceite = 1;
+  // Vazio se aceite; senão: envelope_invalido | assinatura_invalida |
+  // instancia_errada | nif_errado | sem_nif | empresa_errada | sem_empresa |
+  // airgap_sem_termo | expirada | nao_suportado | escrita_falhou.
+  string codigo_erro = 2;
+  string detalhe = 3;
+  // Resumo da licença (para o administrador confirmar que é a dele).
+  string customer = 4;
+  string nif_licenca = 5;
+  string plano = 6;
+  string expires_at = 7;
+  int64 grace_dias = 8;
+  repeated string modulos = 9;
+  string license_id = 10;
+  // false quando `so_validar`.
+  bool instalada = 11;
 }
 
 message EntitlementQuery {
-  // Identificador do tenant. Em saas = empresa_id; em on-prem single-tenant pode
-  // vir vazio (o sidecar usa a licença local, ignorando o campo).
+  // Identificador do tenant (empresa_id). Em on-prem tem de ser a empresa a que a
+  // licença se prende: outra, ou vazio, é recusada (reason = tenant_mismatch).
   string tenant_id = 1;
   // Chave da feature (ex.: "ai_assistant", "advanced_reports", "iso27001_pack").
   string feature = 2;
@@ -33,7 +150,9 @@ message EntitlementQuery {
 
 message EntitlementResult {
   bool enabled = 1;
-  // Limites associados, já resolvidos (ex.: {"tokens_mes": "2000000"}).
+  // Limites associados, já resolvidos (ex.: {"tokens_mes": "2000000"}). Com a
+  // licença só de leitura vêm também "modo" = "so_leitura" e "motivo" (os códigos
+  // de `EstadoLicencaResp.so_leitura_motivo`): ler passa, escrever recusa-se.
   map<string, string> limits = 2;
   // Expiração efetiva (RFC3339) resolvida pelo provider; vazio = herda do termo global.
   string expires_at = 3;
@@ -113,4 +232,1456 @@ message RelatorioGaps {
   int32 score_robustez_implementacao = 6;   // 0-100
   string nivel_confianca = 7;               // "alto" | "medio" | "baixo"
   string gerado_em = 8;                      // RFC3339
+}
+
+// =============================================================================
+// Módulo de processamento local: INVENTÁRIO DE ATIVOS.
+//
+// Contrato GENÉRICO SOBRE TIPOS: `Ativo` tem campos comuns tipados + um mapa
+// `atributos` para os campos específicos de cada tipo. O catálogo de tipos
+// (descritores) é servido pelo próprio sidecar (ListarTiposAtivo) e a UI gera os
+// formulários a partir dele — acrescentar um tipo NÃO altera este contrato. O
+// sidecar valida os `atributos` contra o descritor (autoridade server-side).
+// =============================================================================
+
+service InventarioService {
+  // Catálogo de tipos de ativo (descritores localizados) — a UI gera os forms.
+  rpc ListarTiposAtivo    (TiposAtivoReq)   returns (ListaTiposAtivo);
+  rpc ListarAtivos        (ListarAtivosReq) returns (ListaAtivos);
+  rpc ObterAtivo          (AtivoRef)        returns (Ativo);
+  rpc GuardarAtivo        (Ativo)           returns (Ativo);        // id vazio = criar
+  rpc EliminarAtivo       (AtivoRef)        returns (InventarioVazio);
+  rpc DefinirDependencias (DependenciasReq) returns (InventarioVazio);
+  // Assistente de criticidade: respostas/dimensões → classe derivada +
+  // propagação pelo grafo de dependências + explicação localizada. A metodologia
+  // (fórmula/pesos) vive no sidecar compilado — é IP; a UI só mostra o resultado.
+  rpc ClassificarCriticidade (ClassificarReq) returns (Ativo);
+  rpc RegistarRevisao     (RevisaoReq)      returns (InventarioVazio);
+  // Sanitização no abate (ID.GA-8): regista método/data/responsável e põe o ativo
+  // em "abatido". Fica no histórico como evidência de destruição de dados.
+  rpc RegistarSanitizacao (SanitizacaoReq)  returns (InventarioVazio);
+  rpc ObterPainel         (PainelReq)       returns (PainelInventario);
+  // Documento-evidência (payload JSON localizado; o cliente gera o PDF com jspdf).
+  rpc GerarDocumento      (DocumentoReq)    returns (Documento);
+}
+
+// ── Documentos-evidência (partilhados pelos dois módulos) ────────────────────
+// O sidecar devolve o CONTEÚDO (prosa + tabelas, no idioma do tenant); o frontend
+// gera o ficheiro (PDF/CSV) com o jspdf já existente. Estrutura genérica: cada
+// documento é uma lista de secções, cada secção com prosa e/ou uma tabela.
+
+message DocumentoReq { string tenant_id = 1; string tipo = 2; string locale = 3; }
+message LinhaDoc { repeated string celulas = 1; }
+message SecaoDoc {
+  string titulo = 1;
+  string texto = 2;                  // parágrafos (separados por \n)
+  repeated string cabecalho = 3;     // colunas da tabela (vazio = sem tabela)
+  repeated LinhaDoc linhas = 4;
+}
+message Documento {
+  string titulo = 1;
+  string subtitulo = 2;
+  string data_geracao = 3;           // RFC3339
+  repeated SecaoDoc secoes = 4;
+  // Controlos que este documento evidencia (para o "anexar como evidência").
+  repeated string controlos = 5;
+}
+
+// ── Identidade do ator (partilhada pelos RPCs de escrita dos dois módulos) ───
+// O core deriva o `ambito` do papel do utilizador (o servidor NÃO conhece papéis):
+//   "total"     → escreve qualquer registo do tenant (gestão)
+//   "atribuido" → só escreve registos de que é dono/responsável (delegado)
+// Campo ausente ou ambito "total" = sem restrição (compatibilidade com clientes
+// antigos; o canal é interno com mTLS). Violação de âmbito → PERMISSION_DENIED.
+
+message Ator {
+  string id = 1;       // UUID do utilizador do core (opaco para o servidor)
+  string nome = 2;     // cache para históricos
+  string ambito = 3;   // "total" | "atribuido"
+}
+
+// Metadata comum: `tenant_id` (SaaS = empresa_id) + `locale` para textos localizados.
+message TiposAtivoReq { string tenant_id = 1; string locale = 2; }
+
+// Descritor de um campo específico de tipo — a UI gera o input a partir daqui.
+message OpcaoCampo { string valor = 1; string label = 2; }
+message CampoDescritor {
+  string chave = 1;
+  // "texto" | "data" | "booleano" | "numero" | "opcao" | "ref_ativo" | "ref_ativos"
+  string tipo_dado = 2;
+  bool obrigatorio = 3;
+  string label = 4;                  // já localizado
+  string ajuda = 5;                  // microcopy localizado
+  repeated OpcaoCampo opcoes = 6;    // só quando tipo_dado = "opcao"
+}
+message TipoAtivo {
+  string chave = 1;
+  string icone = 2;                  // classe de ícone (ex.: "pi pi-desktop")
+  string nome = 3;                   // localizado
+  string descricao = 4;              // localizado
+  repeated CampoDescritor campos = 5;
+}
+message ListaTiposAtivo { repeated TipoAtivo tipos = 1; }
+
+message Ativo {
+  string id = 1;                     // vazio na criação
+  string tenant_id = 2;
+  string tipo = 3;
+  string nome = 4;
+  string descricao = 5;
+  string responsavel_id = 6;         // id opaco do utilizador do core (ou vazio)
+  string responsavel_nome = 7;       // nome em cache / "outra pessoa"
+  string localizacao = 8;
+  string estado = 9;                 // ciclo de vida
+  // Entrada de criticidade (1-4; 0 = não respondido). A classe é derivada no F2.
+  int32 confidencialidade = 10;
+  int32 integridade = 11;
+  int32 disponibilidade = 12;
+  int32 valor_negocio = 13;
+  string criticidade = 14;           // "alto" | "medio" | "baixo" | ""
+  string criticidade_origem = 15;    // "manual" | "derivada" | ""
+  map<string, string> atributos = 16;   // campos por tipo (validados no sidecar)
+  repeated string depende_de = 17;      // ids de ativos (grafo) — no ObterAtivo e ListarAtivos
+  repeated string controlos = 18;       // controlo_ids opacos (core)
+  string ultima_revisao = 19;        // RFC3339 ou vazio
+  string created_at = 20;            // RFC3339
+  string updated_at = 21;            // RFC3339
+  // Explicação localizada da classe (gerada no sidecar; só no ObterAtivo/Classificar).
+  // Inclui a nota de propagação quando um ativo dependente puxou a classe para cima.
+  string criticidade_explicacao = 22;
+  // Justificação do override manual (persistida) — sustenta o "método aprovado".
+  string criticidade_justificacao = 23;
+  // Identidade de quem escreve (só no GuardarAtivo; ignorado na leitura).
+  Ator ator = 24;
+  // Sanitização no abate (ID.GA-8) — preenchidos só no ObterAtivo (última sanitização).
+  string sanitizacao_metodo = 25;               // "apagado_seguro"|"disco_destruido"|"devolvido"|"sem_dados"|""
+  string sanitizacao_data = 26;                 // RFC3339 ou vazio
+  string sanitizacao_responsavel_nome = 27;     // quem executou/confirmou
+  string sanitizacao_nota = 28;                 // observações livres
+  // Procedência: de onde veio esta linha e quando. Preenchidos pela importação;
+  // vazios/'manual' em tudo o que foi escrito à mão nesta plataforma. É o que
+  // permite ao auditor ver a diferença entre alguém AFIRMAR que tem inventário e
+  // o sistema do cliente DIZER o que lá está.
+  string origem = 29;              // "manual" | "importado" | "observado"
+  string fonte_tipo = 30;          // "glpi" | "monarc" | "csv_generico" | ...
+  string sincronizado_em = 31;     // RFC3339 da última vez que entrou
+  string estado_origem = 32;       // "presente" | "ausente" (deixou de constar)
+}
+
+message ListarAtivosReq {
+  string tenant_id = 1;
+  string tipo = 2;                   // filtro ("" = todos)
+  string locale = 3;
+  int32 limite = 4;                  // paginação (0 = default do servidor)
+  int32 offset = 5;
+}
+message ListaAtivos {
+  repeated Ativo ativos = 1;
+  int32 total = 2;
+}
+
+message AtivoRef {
+  string tenant_id = 1;
+  string id = 2;
+  string locale = 3;
+  Ator ator = 4;                     // só relevante no EliminarAtivo
+}
+message InventarioVazio {}
+
+message DependenciasReq {
+  string tenant_id = 1;
+  string ativo_id = 2;
+  repeated string depende_de = 3;    // substitui o conjunto de dependências
+  Ator ator = 4;
+}
+
+message RevisaoReq {
+  string tenant_id = 1;
+  repeated string ativo_ids = 2;     // individual ou em lote
+  // Registo histórico persistido (quem reviu) — o core preenche da sessão.
+  string revisto_por_id = 3;
+  string revisto_por_nome = 4;
+  // Enforcement de âmbito (distinto do registo histórico acima).
+  Ator ator = 5;
+}
+
+// Sanitização de um ativo no abate (ID.GA-8): destino dos dados antes de o abater.
+message SanitizacaoReq {
+  string tenant_id = 1;
+  string ativo_id = 2;
+  // "apagado_seguro" | "disco_destruido" | "devolvido" | "sem_dados"
+  string metodo = 3;
+  // Quem executou/confirmou (id opaco do core + nome em cache).
+  string responsavel_id = 4;
+  string responsavel_nome = 5;
+  string data = 6;                   // RFC3339 (vazio = agora)
+  string nota = 7;                   // observações livres
+  Ator ator = 8;                     // enforcement de âmbito
+}
+
+// Assistente de criticidade. `modo` decide como se obtém a classe:
+//   "assistente"/"detalhado" → a partir das dimensões C/I/D + valor de negócio (1-4);
+//   "manual" → o utilizador impõe a classe (`criticidade_manual`) com justificação.
+message ClassificarReq {
+  string tenant_id = 1;
+  string ativo_id = 2;
+  string locale = 3;
+  string modo = 4;                   // "assistente" | "detalhado" | "manual"
+  int32 confidencialidade = 5;       // 1-4 (0 = não respondido)
+  int32 integridade = 6;
+  int32 disponibilidade = 7;
+  int32 valor_negocio = 8;
+  string criticidade_manual = 9;     // modo "manual": "alto" | "medio" | "baixo"
+  string justificacao = 10;          // obrigatória no override manual
+  Ator ator = 11;
+}
+
+message PainelReq { string tenant_id = 1; string locale = 2; }
+message ContagemTipo { string tipo = 1; string label = 2; int32 total = 3; }
+message PainelInventario {
+  int32 total = 1;
+  int32 criticos = 2;                // criticidade = "alto"
+  int32 por_rever = 3;               // sem revisão dentro do período
+  int32 alertas = 4;                 // reservado
+  repeated ContagemTipo por_tipo = 5;
+}
+
+// =============================================================================
+// Módulo de processamento local: ANÁLISE DE RISCO (ID.AR-*, GR.GR-*).
+//
+// Nível de risco = probabilidade × impacto (1-25), DERIVADO no sidecar (não é
+// fonte de verdade). Reavaliar cria uma entrada no histórico versionado (nunca
+// substitui). O tratamento liga-se a um controlo do core (UUID opaco); o risco
+// residual (por maturidade do controlo) chega no F2.
+// =============================================================================
+
+service RiscoService {
+  // Catálogo de cenários de risco por tipo de ativo ("o que pode correr mal") —
+  // servido pelo sidecar (é IP/metodologia). Cada cenário carrega a ameaça +
+  // vulnerabilidade formais e a tipologia do ID.AR-3. A UI mostra os cartões.
+  rpc ListarCenarios     (CenariosReq)     returns (ListaCenarios);
+  rpc ListarRiscos       (ListarRiscosReq) returns (ListaRiscos);
+  rpc ObterRisco         (RiscoRef)        returns (Risco);
+  rpc GuardarRisco       (Risco)           returns (Risco);   // id vazio = criar (+1ª avaliação)
+  rpc EliminarRisco      (RiscoRef)        returns (RiscoVazio);
+  rpc Reavaliar          (ReavaliarReq)    returns (Risco);   // nova entrada no histórico
+  rpc ListarAvaliacoes   (RiscoRef)        returns (ListaAvaliacoes);
+  rpc GuardarTratamento  (Tratamento)      returns (Tratamento);  // id vazio = criar
+  rpc EliminarTratamento (TratamentoRef)   returns (RiscoVazio);
+  rpc ObterPainel        (PainelRiscoReq)  returns (PainelRisco);
+  // Apetite ao risco + periodicidades de reavaliação (GR.GR-1).
+  rpc ObterDefinicoes    (DefinicoesReq)   returns (Definicoes);
+  rpc GuardarDefinicoes  (Definicoes)      returns (Definicoes);
+  // Painel "A precisar de atenção": alertas agregados dos dois módulos.
+  rpc ObterAtencao       (AtencaoReq)      returns (ListaAtencao);
+  // Documentos-evidência do risco (registo de avaliação, plano, metodologia, resumo).
+  rpc GerarDocumento     (DocumentoReq)    returns (Documento);
+}
+
+message DefinicoesReq { string tenant_id = 1; }
+message Definicoes {
+  string tenant_id = 1;
+  int32 limiar_tratar = 2;            // nível a partir do qual é obrigatório tratar
+  int32 limiar_urgente = 3;           // nível a partir do qual é urgente + informar gerência
+  string aprovador = 4;               // quem aprovou o apetite
+  string data_aprovacao = 5;          // YYYY-MM-DD ou vazio
+  int32 periodicidade_altos = 6;      // meses entre reavaliações (altos/críticos)
+  int32 periodicidade_moderados = 7;
+  int32 periodicidade_baixos = 8;
+  Ator ator = 9;                      // só no GuardarDefinicoes
+}
+
+message AtencaoReq { string tenant_id = 1; string locale = 2; }
+message ItemAtencao {
+  string codigo = 1;                  // chave i18n do alerta (o frontend compõe o texto)
+  int32 total = 2;                    // contagem
+  string severidade = 3;              // "alta" | "media" | "baixa"
+}
+message ListaAtencao { repeated ItemAtencao itens = 1; }
+
+message Tratamento {
+  string id = 1;
+  string tenant_id = 2;          // scoping ao guardar (validado contra o risco)
+  string risco_id = 3;
+  string tipo = 4;               // mitigar | aceitar | transferir | evitar
+  string controlo_id = 5;        // UUID opaco → core (ou vazio)
+  string descricao = 6;
+  string estado = 7;             // planeado | em_curso | concluido
+  int32 prioridade = 8;
+  string data_alvo = 9;          // YYYY-MM-DD ou vazio
+  string responsavel_id = 10;
+  string responsavel_nome = 11;
+  string created_at = 12;
+  Ator ator = 13;                // só no GuardarTratamento; ignorado na leitura
+}
+
+message Risco {
+  string id = 1;                 // vazio na criação
+  string tenant_id = 2;
+  string titulo = 3;
+  string descricao = 4;
+  string ativo_id = 5;           // vazio = sem ativo
+  string ativo_nome = 6;         // preenchido na leitura (join)
+  string ameaca = 7;
+  string vulnerabilidade = 8;
+  int32 probabilidade = 9;       // 1-5
+  int32 impacto = 10;            // 1-5
+  int32 nivel = 11;              // derivado = probabilidade × impacto
+  string classe = 12;            // derivado: baixo | moderado | alto | critico
+  string estado = 13;
+  string dono_id = 14;
+  string dono_nome = 15;
+  string justificacao = 16;
+  repeated Tratamento tratamentos = 17;   // só no ObterRisco
+  string created_at = 18;
+  string updated_at = 19;
+  // Cenário do catálogo de onde partiu (vazio = "Outro/texto livre"). Permite ao
+  // export citar a tipologia ID.AR-3 sem a duplicar na DB (lida no catálogo).
+  string cenario_chave = 20;
+  // Risco DEPOIS das medidas (residual, ID.AR-6 Elevado). Derivado no sidecar a
+  // partir do inerente + maturidade dos controlos ligados aos tratamentos (o core
+  // injeta a maturidade — nunca lê o core-db). 0 = sem redução calculada.
+  int32 nivel_residual = 21;
+  string classe_residual = 22;
+  // Identidade de quem escreve (só no GuardarRisco; ignorado na leitura).
+  Ator ator = 23;
+  // Procedência: de onde veio esta linha e quando. Preenchidos pela importação;
+  // vazios/'manual' em tudo o que foi escrito à mão nesta plataforma. É o que
+  // permite ao auditor ver a diferença entre alguém AFIRMAR que tem inventário e
+  // o sistema do cliente DIZER o que lá está.
+  string origem = 24;              // "manual" | "importado" | "observado"
+  string fonte_tipo = 25;          // "glpi" | "monarc" | "csv_generico" | ...
+  string sincronizado_em = 26;     // RFC3339 da última vez que entrou
+  string estado_origem = 27;       // "presente" | "ausente" (deixou de constar)
+  // Só no ListarRiscos: risco ainda ativo cuja última avaliação passou a
+  // periodicidade da sua classe (ou nunca avaliado). A mesma regra do número
+  // «por reavaliar» do painel, para o cartão poder filtrar a tabela.
+  bool por_reavaliar = 28;
+}
+
+// ── Catálogo de cenários de risco (IP; servido pelo sidecar) ─────────────────
+
+message CenariosReq { string tenant_id = 1; string tipo = 2; string locale = 3; }
+message Cenario {
+  string chave = 1;
+  string titulo = 2;             // linguagem plana ("Ransomware encripta os ficheiros")
+  string porque = 3;             // "porque pode acontecer cá"
+  string ameaca = 4;             // formal (para o registo de avaliação)
+  string vulnerabilidade = 5;    // formal
+  // Tipologia ID.AR-3 (para o documento): origem interna/externa; natureza
+  // humana/natural/tecnica; intenção acidental/intencional.
+  string origem = 6;
+  string natureza = 7;
+  string intencao = 8;
+  repeated string controlos_sugeridos = 9;  // códigos do framework (sugestão)
+}
+message ListaCenarios { repeated Cenario cenarios = 1; }
+
+message ListarRiscosReq {
+  string tenant_id = 1;
+  string estado = 2;             // filtro ("" = todos)
+  string ativo_id = 3;           // filtro ("" = todos)
+  int32 limite = 4;
+  int32 offset = 5;
+}
+message ListaRiscos {
+  repeated Risco riscos = 1;
+  int32 total = 2;
+}
+
+message RiscoRef {
+  string tenant_id = 1;
+  string id = 2;
+  // Maturidade dos controlos do tenant {controlo_id → nível 0-5}, injetada pelo
+  // core (dono da maturidade) para o sidecar calcular o residual sem ler o core-db.
+  map<string, string> maturidade_controlos = 3;
+  Ator ator = 4;                 // só relevante no EliminarRisco
+}
+message TratamentoRef {
+  string tenant_id = 1;
+  string id = 2;
+  Ator ator = 3;                 // só relevante no EliminarTratamento
+}
+message RiscoVazio {}
+
+message ReavaliarReq {
+  string tenant_id = 1;
+  string risco_id = 2;
+  int32 probabilidade = 3;
+  int32 impacto = 4;
+  string justificacao = 5;
+  // Registo histórico persistido (quem avaliou) — o core preenche da sessão.
+  string avaliador_id = 6;
+  string avaliador_nome = 7;
+  // Enforcement de âmbito (distinto do registo histórico acima).
+  Ator ator = 8;
+}
+
+message Avaliacao {
+  string id = 1;
+  int32 probabilidade = 2;
+  int32 impacto = 3;
+  int32 nivel = 4;
+  string classe = 5;
+  string justificacao = 6;
+  string avaliador_nome = 7;
+  string data = 8;               // RFC3339
+}
+message ListaAvaliacoes { repeated Avaliacao avaliacoes = 1; }
+
+message PainelRiscoReq { string tenant_id = 1; }
+message CelulaMatriz { int32 probabilidade = 1; int32 impacto = 2; int32 total = 3; }
+message PainelRisco {
+  int32 total = 1;
+  int32 altos = 2;               // classe alto + critico
+  int32 em_tratamento = 3;
+  int32 abertos = 4;
+  repeated CelulaMatriz matriz = 5;   // contagens por célula (probabilidade × impacto)
+  int32 acima_tolerado = 6;      // nível ≥ limiar_tratar do apetite (GR.GR-1)
+  int32 por_reavaliar = 7;       // última avaliação mais velha que a periodicidade da classe
+}
+
+// =============================================================================
+// Módulo de processamento local: CADEIA DE ABASTECIMENTO / FORNECEDORES (GR.CA-*).
+//
+// Constrói sobre os ativos "servico_externo" do inventário: cada fornecedor pode
+// ligar-se a um ativo do tenant. A AVALIAÇÃO (questionário → score/classe) é
+// metodologia = IP no sidecar (pesos ocultos); a UI só mostra o resultado. Cobre
+// avaliação periódica (GR.CA-4/7), due diligence (GR.CA-6), requisitos contratuais
+// (GR.CA-5), pessoal-chave nos exercícios (GR.CA-8) e término de contrato (GR.CA-10).
+// =============================================================================
+
+service FornecedorService {
+  rpc ListarFornecedores (ListarFornecedoresReq) returns (ListaFornecedores);
+  rpc ObterFornecedor    (FornecedorRef)         returns (Fornecedor);
+  rpc GuardarFornecedor  (Fornecedor)            returns (Fornecedor);   // id vazio = criar
+  rpc EliminarFornecedor (FornecedorRef)         returns (FornecedorVazio);
+  // Questionário de avaliação (perguntas localizadas; os pesos são IP, ocultos).
+  rpc ListarQuestionario (QuestionarioReq)        returns (Questionario);
+  // Avalia o fornecedor: respostas → score/classe no sidecar + entrada no histórico.
+  rpc AvaliarFornecedor  (AvaliacaoFornecedorReq) returns (Fornecedor);
+  rpc ListarAvaliacoesFornecedor (FornecedorRef)  returns (ListaAvaliacoesFornecedor);
+  rpc ObterPainelFornecedor (PainelFornecedorReq) returns (PainelFornecedor);
+  // Documento-evidência (payload JSON localizado; o cliente gera o PDF).
+  rpc GerarDocumento     (DocumentoReq)           returns (Documento);
+}
+
+message ListarFornecedoresReq {
+  string tenant_id = 1;
+  string estado = 2;             // filtro ("" = todos)
+  string locale = 3;
+  int32 limite = 4;
+  int32 offset = 5;
+}
+message ListaFornecedores { repeated Fornecedor fornecedores = 1; int32 total = 2; }
+
+message FornecedorRef {
+  string tenant_id = 1;
+  string id = 2;
+  Ator ator = 3;                 // só relevante no EliminarFornecedor
+}
+message FornecedorVazio {}
+
+message Fornecedor {
+  string id = 1;                 // vazio na criação
+  string tenant_id = 2;
+  string ativo_id = 3;           // ativo "servico_externo" ligado (ou vazio)
+  string ativo_nome = 4;         // preenchido na leitura (join)
+  string nome = 5;
+  string servico = 6;            // o que fornece
+  string contacto = 7;
+  string criticidade = 8;        // "alto" | "medio" | "baixo" | "" (definida pelo dono)
+  string estado = 9;             // "ativo" | "em_avaliacao" | "encerrado"
+  // Due diligence pré-contratação (GR.CA-6).
+  bool due_diligence = 10;
+  string due_diligence_nota = 11;
+  string due_diligence_data = 12;    // YYYY-MM-DD ou vazio
+  // Requisitos contratuais (GR.CA-5): mapa clausula → "true" | "false".
+  map<string, string> requisitos = 13;
+  // Pessoal-chave do fornecedor a incluir nos exercícios (GR.CA-8).
+  string pessoal_chave = 14;
+  // Término de contrato (GR.CA-10).
+  string termino_nota = 15;
+  bool acessos_revogados = 16;
+  string dados_destino = 17;         // "devolvidos" | "eliminados" | ""
+  string encerrado_em = 18;          // YYYY-MM-DD ou vazio
+  // Avaliação de risco (derivada no sidecar do último questionário).
+  int32 risco_score = 19;            // 0-100
+  string risco_classe = 20;          // "alto" | "medio" | "baixo" | ""
+  string ultima_avaliacao = 21;      // RFC3339 ou vazio
+  string proxima_avaliacao = 22;     // YYYY-MM-DD ou vazio
+  // Responsável (delegação; base do âmbito "atribuido" do ator).
+  string responsavel_id = 23;
+  string responsavel_nome = 24;
+  string created_at = 25;
+  string updated_at = 26;
+  Ator ator = 27;                    // só no GuardarFornecedor; ignorado na leitura
+}
+
+message QuestionarioReq { string tenant_id = 1; string locale = 2; }
+message PerguntaFornecedor {
+  string chave = 1;
+  string texto = 2;              // localizado
+  string ajuda = 3;              // microcopy localizado
+}
+message Questionario { repeated PerguntaFornecedor perguntas = 1; }
+
+message AvaliacaoFornecedorReq {
+  string tenant_id = 1;
+  string fornecedor_id = 2;
+  // Resposta por pergunta: chave → 0 (não) | 1 (parcial) | 2 (sim) | 3 (n/a).
+  map<string, int32> respostas = 3;
+  string nota = 4;
+  // Registo histórico persistido (quem avaliou) — o core preenche da sessão.
+  string avaliador_id = 5;
+  string avaliador_nome = 6;
+  Ator ator = 7;                 // enforcement de âmbito
+}
+
+message AvaliacaoFornecedor {
+  string id = 1;
+  int32 score = 2;               // 0-100 (derivado)
+  string classe = 3;             // "alto" | "medio" | "baixo"
+  string nota = 4;
+  string avaliador_nome = 5;
+  string data = 6;               // RFC3339
+}
+message ListaAvaliacoesFornecedor { repeated AvaliacaoFornecedor avaliacoes = 1; }
+
+message PainelFornecedorReq { string tenant_id = 1; }
+message PainelFornecedor {
+  int32 total = 1;
+  int32 criticos = 2;            // criticidade = "alto"
+  int32 risco_alto = 3;          // risco_classe = "alto"
+  int32 por_avaliar = 4;         // próxima avaliação no passado ou nunca avaliado
+  int32 sem_due_diligence = 5;
+}
+
+
+// =============================================================================
+// PURGA ADMINISTRATIVA (plano de controlo).
+//
+// Apaga TODOS os dados de um tenant na premium-data-db (inventário, risco,
+// fornecedores, jobs de IA). Chamado APENAS pelo plano de controlo (superadmin)
+// durante o hard-delete de um tenant — nunca pela app. O perímetro de confiança
+// é a rede interna + mTLS, como nos restantes serviços deste contrato.
+// =============================================================================
+
+service PurgaService {
+  rpc PurgarTenant (PurgaTenantReq) returns (PurgaTenantResp);
+  // Apagamento a pedido do titular (RGPD Art. 17): troca o nome de uma pessoa
+  // anonimizada no core em todas as cópias guardadas aqui (responsáveis, donos,
+  // avaliadores, autores, quem decidiu). Chamado pela app ANTES de anonimizar a
+  // conta — se falhar, a anonimização não avança. Idempotente.
+  rpc AnonimizarPessoa (AnonimizarPessoaReq) returns (AnonimizarPessoaResp);
+}
+
+message PurgaTenantReq { string tenant_id = 1; }
+message PurgaTenantResp { int64 linhas_apagadas = 1; }
+
+message AnonimizarPessoaReq {
+  string tenant_id = 1;
+  string utilizador_id = 2;   // UUID do utilizador no core
+  string nome_substituto = 3; // o que passa a aparecer no lugar do nome
+}
+message AnonimizarPessoaResp { int64 linhas_alteradas = 1; }
+
+// =============================================================================
+// BACKUP DA INSTALAÇÃO (on-prem).
+//
+// O sidecar é o dono da premium-data-db: no backup, exporta ele próprio um
+// pg_dump da SUA base e envia-o em chunks; no restauro, recebe o dump e
+// aplica-o na SUA base (com as migrações pendentes a correr a seguir). O core
+// embala/desembala o dump no arquivo de backup mas nunca toca na premium-db.
+// Sem tenant_id: o âmbito é a instalação inteira (on-prem, single-instance).
+// =============================================================================
+
+service BackupService {
+  rpc ExportarDados (BackupExportReq) returns (stream BackupChunk);
+  rpc ImportarDados (stream BackupChunk) returns (BackupImportResp);
+}
+
+message BackupExportReq {}
+message BackupChunk { bytes dados = 1; }
+message BackupImportResp { int64 bytes_recebidos = 1; }
+
+// =============================================================================
+// EXPORTAÇÃO DOS DADOS PREMIUM DE UM TENANT.
+//
+// Os dados são do cliente: saem em qualquer estado da licença (em dia, só de
+// leitura, revogada, expirada, sem licença), como a purga e o backup — este
+// serviço não passa pelo portão de direito. Só o núcleo o chama, com a empresa
+// da sessão; quem pode exportar decide-se no núcleo (a capacidade de exportar).
+// O sidecar lê tudo numa só fotografia da base e envia os ficheiros um a um, aos
+// bocados — nada se junta em memória; o núcleo embala-os num zip. Credenciais e
+// segredos dos conetores nunca saem. Um de cada vez por sidecar: ocupado ->
+// RESOURCE_EXHAUSTED "exportacao_ocupada"; acima do teto -> RESOURCE_EXHAUSTED
+// "exportacao_excede_teto" a meio do stream.
+// =============================================================================
+
+service ExportacaoService {
+  rpc ExportarDadosTenant (ExportacaoTenantReq) returns (stream ExportacaoParte);
+}
+
+message ExportacaoTenantReq { string tenant_id = 1; }
+
+// Uma parte do stream: o início de um ficheiro (o caminho dentro do arquivo,
+// relativo, só com [a-z0-9_./-]) ou um bocado do ficheiro corrente.
+message ExportacaoParte {
+  oneof parte {
+    string ficheiro = 1;
+    bytes dados = 2;
+  }
+}
+
+// =============================================================================
+// PESQUISA GLOBAL (premium).
+//
+// O core pesquisa as SUAS entidades; quando o sidecar existe e responde, pede-lhe
+// numa ÚNICA chamada os dados de que ELE é dono (ativos, riscos, fornecedores).
+// O sidecar aplica os entitlements do tenant, ordena e limita — o core nunca
+// precisa de conhecer o schema premium. Falha/timeout = o core devolve só os
+// seus resultados (degradação silenciosa).
+// =============================================================================
+
+service PesquisaService {
+  rpc Pesquisar (PesquisaReq) returns (ResultadosPesquisa);
+}
+
+message PesquisaReq {
+  string tenant_id = 1;
+  string q = 2;                // texto livre, já normalizado pelo core
+  string locale = 3;
+  int32 limite_por_tipo = 4;   // 0 = default do servidor
+}
+
+message ResultadoPesquisa {
+  string tipo = 1;             // "ativo" | "risco" | "fornecedor"
+  string id = 2;
+  string titulo = 3;
+  string subtitulo = 4;        // contexto curto (estado/classe) para desambiguar
+}
+
+message ResultadosPesquisa {
+  repeated ResultadoPesquisa resultados = 1;
+}
+
+// =============================================================================
+// Conetores — verificação técnica de configuração em serviços externos.
+// Fase 1: Microsoft Entra ID (Microsoft Graph, apenas leitura).
+//
+// O sidecar é a autoridade: guarda a credencial do cliente (cifrada em repouso),
+// fala com o serviço externo, avalia os sinais e regista os eventos. O core é
+// passthrough (UI/RBAC) e consome os eventos por cursor para criar notificações,
+// evidências e auditoria. A credencial entra em ConfigurarConetor e NUNCA é
+// devolvida por nenhum RPC — nem mascarada. Substituir = enviar de novo.
+// =============================================================================
+
+service ConetorService {
+  // Cria/atualiza a configuração. Credencial vazia = manter a existente.
+  rpc ConfigurarConetor (ConfigConetorReq) returns (EstadoConetorResp);
+  // Estado atual (sem credencial): configuração + última verificação.
+  rpc EstadoConetor (ConetorTenantReq) returns (EstadoConetorResp);
+  // Prova de vida: obtém um token e faz uma leitura inócua no serviço externo.
+  // O erro vem categorizado para o assistente de configuração sugerir a correção.
+  rpc TestarConetor (ConetorTenantReq) returns (ResultadoTesteConetor);
+  // Verificação completa (manual ou agendada). O pedido leva o contexto do core
+  // (perfil + estados declarados dos controlos) para avaliar as duas réguas e
+  // detetar contradições entre o declarado e o observado.
+  rpc ExecutarVerificacao (VerificacaoConetorReq) returns (ResumoVerificacao);
+  // Sinais com veredictos e agregados (sem dados nominais) para o painel.
+  rpc PainelConetor (ConetorTenantReq) returns (PainelConetorResp);
+  // Detalhe nominal de um sinal (ex.: contas em incumprimento), decifrado a pedido.
+  rpc DetalheSinal (DetalheSinalReq) returns (DetalheSinalResp);
+  // Eventos (drift/contradição/aviso) a partir de um cursor — consumidos pelo
+  // tick do core para notificações, evidências e auditoria.
+  rpc ListarEventosConetor (EventosConetorReq) returns (EventosConetorResp);
+  // Marca um evento como resolvido, com nota.
+  rpc ResolverEventoConetor (ResolverEventoConetorReq) returns (ConetorVazio);
+  // Remove o conetor e TODOS os dados associados (credencial, sinais, eventos).
+  rpc RemoverConetor (RemoverConetorReq) returns (ConetorVazio);
+  // Reavalia, sem o ficheiro original, os sinais das observações importadas
+  // que dependem do tempo ou do nível do perfil (frescura do relatório).
+  // Chamado pelo tick do core com o contexto atual; as transições geram
+  // eventos como numa verificação.
+  rpc ReavaliarObservacoes (VerificacaoConetorReq) returns (ResumoVerificacao);
+  // Script do coletor do Active Directory (só leitura), servido pela própria
+  // instalação para a versão do script e a do leitor nunca divergirem.
+  rpc ObterColetorAd (ConetorTenantReq) returns (ColetorAd);
+
+  // ── Verificações técnicas: por fonte, por tema e por objeto ──────────────
+  // Para os formulários das metas: as fontes (tema, transportes) e, por fonte,
+  // os sinais com os campos que a empresa pode apertar e as predefinições.
+  rpc CatalogoVerificacoes (ConetorTenantReq) returns (CatalogoVerificacoesResp);
+  // O estado de todas as fontes a que o tenant tem direito, numa lista: de onde
+  // vêm os dados, de quando são e se a última tentativa falhou.
+  rpc EstadoFontes (ConetorTenantReq) returns (EstadoFontesResp);
+  // As constatações de um tema (vazio = todos), com os textos resumidos. Os
+  // passos completos e os afetados vêm no DetalheSinal, ao abrir uma linha.
+  rpc Constatacoes (ConstatacoesReq) returns (ConstatacoesResp);
+  // As constatações ligadas a um conjunto de controlos (detalhe do controlo,
+  // avisos nos riscos), sem trazer o painel inteiro.
+  rpc ConstatacoesDosControlos (ControlosConstatacoesReq) returns (ConstatacoesResp);
+  // Para o tick do core: eventos novos, as constatações para a evidência
+  // automática e as verificações em linha concluídas. Sem textos de ecrã.
+  rpc ProcessamentoConetores (ProcessamentoReq) returns (ProcessamentoResp);
+  // O que as verificações dizem de um ativo (vulnerabilidades, agente, domínio).
+  rpc FactosDoAtivo (FactosAtivoReq) returns (FactosResp);
+  // Os factos de um domínio, por ativo (ex.: vulnerabilidades de cada máquina).
+  rpc FactosPorDominio (FactosDominioReq) returns (FactosResp);
+  // Alertas graves recebidos da monitorização, por analisar ou já decididos.
+  rpc ListarAlertas (AlertasReq) returns (ListaAlertas);
+  // Decide um alerta: passou a incidente (com o id) ou foi descartado (com motivo).
+  rpc DecidirAlerta (DecidirAlertaReq) returns (AlertaFila);
+}
+
+message ConetorTenantReq {
+  string tenant_id = 1;
+  string tipo = 2;                      // a fonte, onde o pedido se refere a uma
+  string locale = 3;                    // textos de remediação (vazio = pt-PT)
+}
+
+message ConfigConetorReq {
+  string tenant_id = 1;
+  string tipo = 2;               // "entra" (único suportado na fase 1)
+  string ms_tenant_id = 3;       // GUID do tenant Microsoft (validado no sidecar)
+  string client_id = 4;          // GUID da app registada pelo cliente
+  // Credencial em claro APENAS em trânsito (o canal core→sidecar é mTLS); o
+  // sidecar cifra antes de guardar. Vazia = manter a credencial já guardada.
+  string credencial = 5;
+  string credencial_tipo = 6;    // "secret" (fase 1) | "certificado" (futuro)
+  int32 intervalo_horas = 7;     // 0 = default do servidor
+  // Política da empresa por sinal + controlos ligados (JSON). O sidecar valida
+  // o formato e os limites; o conteúdo é interpretado na avaliação.
+  string sinais_config_json = 8;
+  bool ativo = 9;
+  Ator ator = 10;
+  // "direto" (ligação ao serviço, com credencial) | "ficheiro" (só política:
+  // os dados chegam por ficheiro carregado). Vazio = "direto".
+  string modo = 11;
+  // AD em ligação direta (LDAPS, só on-prem): servidor, porta, nome_tls,
+  // utilizador. A password segue em `credencial`; vazia = manter a guardada.
+  map<string, string> parametros = 12;
+  // CA da empresa em PEM (a única em que o TLS confia). Vazia = manter.
+  string ca_pem = 13;
+}
+
+message EstadoConetorResp {
+  bool configurado = 1;
+  string tipo = 2;
+  string ms_tenant_id = 3;
+  string client_id = 4;
+  string credencial_tipo = 5;
+  string credencial_expira_em = 6;  // RFC3339; vazio = desconhecido (preenchido pela verificação)
+  int32 intervalo_horas = 7;
+  bool ativo = 8;
+  string sinais_config_json = 9;
+  string ultima_verificacao = 10;   // RFC3339; vazio = nunca correu
+  string ultimo_resultado = 11;     // "ok" | "parcial" | "erro" | ""
+  string modo = 12;                 // "direto" | "ficheiro"
+  string dominio = 13;              // AD: domínio DNS do último ficheiro lido
+  // AD em ligação direta: servidor, porta, nome_tls, utilizador (nunca a password).
+  map<string, string> parametros = 14;
+  bool tem_ca = 15;                 // há uma CA guardada para a ligação direta
+}
+
+message ResultadoTesteConetor {
+  bool ok = 1;
+  // Vazio quando ok. Senão, um código para o frontend traduzir e sugerir ação:
+  // "nao_configurado" | "credencial_invalida" | "consent_em_falta" |
+  // "permissao_em_falta" | "tenant_invalido" | "rede"
+  // AD (LDAPS): "certificado_nao_confiavel" | "certificado_nome" | "conta_bloqueada" | ...
+  string erro_categoria = 2;
+  string dominio = 3;                   // AD: domínio lido na prova (quando ok)
+}
+
+message VerificacaoConetorReq {
+  string tenant_id = 1;
+  string perfil = 2;                    // "basico" | "substancial" | "elevado"
+  // Código do controlo → estado declarado no core (para detetar contradições).
+  map<string, string> declaracoes = 3;
+  Ator ator = 4;                        // ausente = execução agendada
+  string tipo = 5;                      // vazio = "entra"; "ad" = ligação direta ao AD
+}
+
+message ResumoVerificacao {
+  string verificacao_id = 1;
+  string resultado = 2;                 // "ok" | "parcial" | "erro"
+  string erro_categoria = 3;            // vazio quando ok
+  int32 sinais_avaliados = 4;
+  int32 nao_conformes_politica = 5;
+  int32 nao_conformes_minimo = 6;
+  int32 indeterminados = 7;
+  int32 eventos_novos = 8;
+}
+
+message SinalConetor {
+  string sinal = 1;                     // identificador estável do sinal
+  // Régua dupla: mínimo do referencial (pelo perfil) e política da empresa.
+  // Valores: "conforme" | "nao_conforme" | "indeterminado"
+  string veredicto_minimo = 2;
+  string veredicto_politica = 3;
+  string razao = 4;                     // código i18n quando indeterminado
+  string resumo_json = 5;               // agregados SEM dados nominais
+  repeated string controlos = 6;        // códigos dos controlos ligados
+  string verificado_em = 7;             // RFC3339
+  string fonte = 8;                     // "entra" ou a ferramenta do relatório importado
+  // Passos para corrigir, localizados (JSON: o_que, como[], confirmar). Só
+  // texto: a plataforma nunca executa nada no sistema do cliente.
+  string remediacao_json = 9;
+}
+
+message PainelConetorResp {
+  EstadoConetorResp estado = 1;         // ligação à cloud (Entra)
+  repeated SinalConetor sinais = 2;
+  EstadoConetorResp estado_ad = 3;      // Active Directory local
+  // O que está ligado: "local" | "cloud" | "hibrido" | "independentes" | "".
+  string cenario = 4;
+  // Avisos da deteção (nunca decidem nada): "ad_por_ligar" | "cloud_por_ligar".
+  repeated string avisos_cenario = 5;
+  // Fontes a que o tenant tem direito ("entra", "ad", "gvm", ...): o ecrã
+  // mostra "não incluído no plano" em vez de deixar tentar e recusar.
+  repeated string fontes = 6;
+}
+
+message DetalheSinalReq {
+  string tenant_id = 1;
+  string sinal = 2;
+  Ator ator = 3;
+  string fonte = 4;                     // obrigatória
+  string locale = 5;                    // textos dos passos (vazio = pt-PT)
+}
+
+message DetalheSinalResp {
+  SinalConetor sinal = 1;
+  string detalhe_json = 2;              // detalhe nominal, decifrado só aqui
+}
+
+message EventosConetorReq {
+  string tenant_id = 1;
+  int64 a_partir_de = 2;                // cursor exclusivo (id > a_partir_de)
+  int32 limite = 3;                     // 0 = default do servidor
+  bool so_por_resolver = 4;
+  // O histórico no ecrã: os mais recentes primeiro, a partir de antes_de
+  // (exclusivo; 0 = do fim). O tick do core pede pela ordem de criação.
+  bool recentes_primeiro = 5;
+  int64 antes_de = 6;
+}
+
+message EventoConetor {
+  int64 id = 1;                         // sequencial por tenant = cursor natural
+  string sinal = 2;
+  string tipo = 3;                      // "drift" | "contradicao" | "aviso"
+  string de_veredicto = 4;
+  string para_veredicto = 5;
+  string criado_em = 6;                 // RFC3339
+  string resolvido_em = 7;              // vazio = por resolver
+  string resolvido_por = 8;
+  string nota = 9;                      // nota da resolução (decifrada)
+  repeated string controlos = 10;
+  string fonte = 11;                    // "entra" ou a ferramenta do relatório importado
+}
+
+message EventosConetorResp {
+  repeated EventoConetor eventos = 1;
+}
+
+message CatalogoVerificacoesResp {
+  // {fontes: [{id, tema, transportes, tem_metas}], metas: {<fonte>: {sinais, predefinicoes}}}
+  string catalogo_json = 1;
+}
+
+message EstadoFonte {
+  string fonte = 1;
+  string tema = 2;                      // "identidades" | "vulnerabilidades" | "monitorizacao"
+  repeated string transportes = 3;      // os aceites: "direto" | "ficheiro" | "cruzamento"
+  string transporte = 4;                // o que está em uso
+  bool configurado = 5;
+  string ultimo_dado = 6;               // RFC3339: a data dos dados (scan, recolha), nunca a do carregamento
+  int32 idade_dias = 7;                 // -1 = sem data
+  int32 idade_maxima_dias = 8;          // 0 = sem limite conhecido
+  bool dados_velhos = 9;
+  string ultima_verificacao = 10;       // RFC3339 da última tentativa
+  string ultimo_resultado = 11;         // "ok" | "parcial" | "erro" | ""
+  string ultimo_erro = 12;              // categoria, quando a última tentativa falhou
+  bool tem_metas = 13;
+  string dominio = 14;                  // AD: domínio DNS da última leitura
+}
+
+message EstadoFontesResp {
+  repeated EstadoFonte fontes = 1;
+  string cenario = 2;                   // identidades: "local" | "cloud" | "hibrido" | "independentes" | ""
+  repeated string avisos_cenario = 3;
+}
+
+message ConstatacoesReq {
+  string tenant_id = 1;
+  string locale = 2;
+  string tema = 3;                      // vazio = todos os temas
+}
+
+message ConstatacoesResp {
+  repeated SinalConetor sinais = 1;
+}
+
+message ControlosConstatacoesReq {
+  string tenant_id = 1;
+  string locale = 2;
+  repeated string codigos = 3;          // códigos dos controlos (ex.: "PR.GA-3")
+}
+
+message ProcessamentoReq {
+  string tenant_id = 1;
+  int64 a_partir_de = 2;                // cursor dos eventos (id > a_partir_de)
+  string verificacoes_desde = 3;        // RFC3339; vazio = só a mais recente de cada fonte
+  int32 limite = 4;                     // eventos por pedido; 0 = default do servidor
+}
+
+// Uma constatação, para a evidência automática: sem textos de ecrã.
+message ConstatacaoEvidencia {
+  string fonte = 1;
+  string sinal = 2;
+  string veredicto_minimo = 3;
+  string veredicto_politica = 4;
+  string razao = 5;
+  string resumo_json = 6;
+  repeated string controlos = 7;              // ligados (metas da empresa ou catálogo)
+  repeated string controlos_evidencia = 8;    // onde anexar a evidência (obrigatórios ou ligados)
+  string verificado_em = 9;
+}
+
+message VerificacaoFeita {
+  string fonte = 1;
+  string iniciada_em = 2;               // RFC3339
+  string resultado = 3;                 // "ok" | "parcial" | "erro"
+  string erro_categoria = 4;
+  string transporte = 5;                // "direto" | "ficheiro" | "cruzamento"
+}
+
+message ProcessamentoResp {
+  repeated EventoConetor eventos = 1;
+  repeated ConstatacaoEvidencia constatacoes = 2;
+  repeated VerificacaoFeita verificacoes = 3;
+}
+
+message FactosAtivoReq {
+  string tenant_id = 1;
+  string ativo_id = 2;
+}
+
+message FactosDominioReq {
+  string tenant_id = 1;
+  string dominio = 2;                   // "vulnerabilidades" | "monitorizacao" | "diretorio" | "alertas"
+}
+
+message FactoAtivo {
+  string ativo_id = 1;
+  string ativo_nome = 2;
+  string fonte = 3;
+  string dominio = 4;
+  string dados_json = 5;                // contagens e estados; sem listas de CVE
+  string observado_em = 6;              // RFC3339: a data dos dados
+  string criticidade = 7;               // do inventário: "alto" | "medio" | "baixo" | ""
+  string estado_ativo = 8;              // do inventário (ex.: "abatido")
+}
+
+message FactosResp {
+  repeated FactoAtivo factos = 1;
+}
+
+message AlertasReq {
+  string tenant_id = 1;
+  string estado = 2;                    // "por_analisar" (vazio) | "incidente" | "descartado" | "todos"
+  int32 limite = 3;
+}
+
+message AlertaFila {
+  int64 id = 1;
+  string fonte = 2;
+  string agente = 3;                    // decifrado a pedido
+  string titulo = 4;                    // decifrado a pedido
+  int32 nivel = 5;
+  string ocorrido_em = 6;               // RFC3339
+  string ativo_id = 7;
+  string ativo_nome = 8;
+  string estado = 9;                    // "por_analisar" | "incidente" | "descartado"
+  string motivo = 10;                   // de um descarte (decifrado)
+  string incidente_id = 11;
+  string decidido_por = 12;
+  string decidido_em = 13;
+  string recebido_em = 14;
+}
+
+message ListaAlertas {
+  repeated AlertaFila alertas = 1;
+  int32 por_analisar = 2;
+  // Por analisar há mais tempo do que o prazo de alerta precoce de um incidente.
+  int32 por_analisar_atrasados = 3;
+}
+
+message DecidirAlertaReq {
+  string tenant_id = 1;
+  int64 id = 2;
+  string decisao = 3;                   // "incidente" | "descartado"
+  string motivo = 4;                    // obrigatório num descarte
+  string incidente_id = 5;              // obrigatório quando passou a incidente
+  Ator ator = 6;
+}
+
+message ResolverEventoConetorReq {
+  string tenant_id = 1;
+  int64 evento_id = 2;
+  string nota = 3;
+  Ator ator = 4;
+}
+
+message RemoverConetorReq {
+  string tenant_id = 1;
+  Ator ator = 2;
+  string tipo = 3;                      // vazio = "entra"
+}
+
+message ColetorAd {
+  bytes script = 1;
+  string sha256 = 2;
+  string versao = 3;
+  string nome_ficheiro = 4;
+}
+
+message ConetorVazio {}
+
+// =============================================================================
+// IMPORTAÇÃO DE DADOS DE FERRAMENTAS EXTERNAS (premium, por ficheiro).
+//
+// O core é uma CANCELA: valida tamanho/tipo, calcula o hash, audita e faz
+// stream dos bytes para cá. Nunca interpreta o ficheiro. O sidecar é a
+// autoridade — lê, normaliza, reconcilia e persiste, porque é dono da
+// premium-data-db onde os ativos e os riscos vivem.
+//
+// Três eixos independentes, que nunca sabem uns dos outros:
+//   * TRANSPORTE  — de onde vêm os bytes (hoje ficheiro; amanhã API)
+//   * ADAPTADOR   — o que os bytes querem dizer (glpi, monarc, gvm, wazuh, …)
+//   * DESTINO     — para onde vai (inventário, risco, observação)
+//
+// Duas classes com destinos diferentes:
+//   * REGISTO    (GLPI, Monarc) → entidades com identidade própria; precisam de
+//     mapeamento, reconciliação, procedência e reversão.
+//   * OBSERVAÇÃO (OpenVAS/GVM, Wazuh) → retrato do estado num instante; não cria
+//     entidades, converte-se numa verificação e entra no motor de conetores.
+//
+// Nenhuma escrita acontece sem simulação prévia aceite pelo utilizador.
+// =============================================================================
+
+service ImportacaoService {
+  // Catálogo de fontes conhecidas (constrói o wizard; não toca na base).
+  rpc ListarFontes (FontesReq) returns (ListaFontes);
+  // Recebe os bytes, deteta formato/delimitador/codificação e devolve amostra
+  // + mapeamento sugerido. Deixa a análise em staging, não escreve no destino.
+  rpc AnalisarFicheiro (stream ImportacaoChunk) returns (AnaliseFicheiro);
+  // Aplica o mapeamento ao staging e devolve o diff. Continua sem escrever.
+  rpc SimularImportacao (SimulacaoReq) returns (DiffImportacao);
+  // Escreve, com as decisões de reconciliação tomadas. Transacional.
+  rpc AplicarImportacao (AplicarReq) returns (ResumoImportacao);
+  rpc ListarImportacoes (HistoricoReq) returns (ListaImportacoes);
+  rpc DetalheImportacao (ImportacaoRef) returns (DetalheImportacaoResp);
+  // Desfaz o que uma importação criou/alterou, saltando o que foi tocado à mão.
+  rpc ReverterImportacao (ImportacaoRef) returns (ResumoImportacao);
+  rpc GuardarPerfilMapeamento (PerfilMapeamento) returns (PerfilMapeamento);
+  rpc ListarPerfisMapeamento (PerfisReq) returns (ListaPerfis);
+  // Classe B: o relatório vira uma verificação no motor de conetores.
+  rpc ImportarObservacao (stream ImportacaoChunk) returns (ResumoObservacao);
+  // O ficheiro do coletor do Active Directory. Mesmo transporte e mesmo motor das
+  // observações; o direito é o do conetor AD (não o da importação).
+  rpc ImportarColetorAd (stream ImportacaoChunk) returns (ResumoObservacao);
+  // Máquinas que os relatórios viram e o inventário não conhece. Propostas —
+  // quem decide é uma pessoa, e a decisão fica registada.
+  rpc ListarDescobertas (DescobertasReq) returns (ListaDescobertas);
+  rpc DecidirDescobertas (DecisaoDescobertasReq) returns (ListaDescobertas);
+  // O que as importações mudaram num ativo ou num risco (ficha do registo).
+  rpc HistoricoRegisto (HistoricoRegistoReq) returns (ListaAlteracoesRegisto);
+  // Documento-evidência: de onde vieram os dados e quando (a pedido).
+  rpc DocumentoImportacoes (DocumentoReq) returns (Documento);
+  // Qualidade do inventário: quantos ativos têm dono, série, procedência e há
+  // quanto tempo foram confirmados. Responde ao que um auditor pergunta.
+  rpc QualidadeInventario (QualidadeReq) returns (QualidadeResp);
+}
+
+// ── Descobertas e história do registo ────────────────────────────────────────
+
+message QualidadeReq { string tenant_id = 1; }
+
+// Contagens e percentagens; percentagem vazia = inventário vazio (uma
+// percentagem sobre zero seria uma afirmação falsa, não um zero).
+message QualidadeResp {
+  int32 total = 1;
+  int32 com_dono = 2;
+  int32 com_serie = 3;
+  int32 com_procedencia = 4;
+  int32 ausentes = 5;
+  int32 por_confirmar = 6;
+  int32 vistos_30d = 7;
+  string pct_com_dono = 8;
+  string pct_com_serie = 9;
+  string pct_com_procedencia = 10;
+  string pct_vistos_30d = 11;
+}
+
+message DescobertasReq {
+  string tenant_id = 1;
+  string estado = 2;                    // vazio = todos
+  int32 limite = 3;
+}
+
+message Descoberta {
+  string id = 1;
+  string fonte = 2;                     // gvm | wazuh
+  string endereco = 3;                  // normalizado
+  string rotulo = 4;                    // como apareceu no relatório
+  string estado = 5;                    // pendente|aceite|ignorada|ja_existe
+  string ativo_id = 6;                  // preenchido quando aceite
+  string primeiro_visto = 7;            // RFC3339
+  string ultimo_visto = 8;
+  int32 vezes_vista = 9;
+}
+
+message ListaDescobertas {
+  repeated Descoberta descobertas = 1;
+  int32 pendentes = 2;
+}
+
+message DecisaoDescobertasReq {
+  string tenant_id = 1;
+  repeated string ids = 2;
+  string acao = 3;                      // aceitar | ignorar
+  Ator ator = 4;
+}
+
+message HistoricoRegistoReq {
+  string tenant_id = 1;
+  string entidade_id = 2;
+  string destino = 3;                   // inventario | risco
+}
+
+// Uma passagem de importação por um registo. `valores_antes` é o que lá estava
+// ANTES — é o que permite dizer "era X" sem guardar uma segunda cópia do registo.
+message AlteracaoRegisto {
+  string importacao_id = 1;
+  string fonte = 2;
+  string nome_ficheiro = 3;
+  string autor_nome = 4;
+  bool criado = 5;
+  map<string, string> valores_antes = 6;
+  string escrito_em = 7;                // RFC3339
+}
+
+// Um identificador (nº de série, MAC, hostname, IP) que passou de um ativo para
+// outro. Um endereço pertence a um ativo de cada vez; quando muda de dono, o
+// registo antigo deixa de ser reconhecido por ele — e é isso que explica, dois
+// passos depois, uma máquina a cair para "sem cobertura".
+message TransferenciaIdentidade {
+  string tipo = 1;                      // serie | mac | hostname | ip | fonte_ref
+  string valor = 2;                     // já normalizado
+  string fonte = 3;                     // que sistema provocou a troca
+  string quando = 4;                    // RFC3339
+  bool perdida = 5;                     // true = este registo PERDEU o identificador
+  string outro_id = 6;                  // o outro lado da troca
+  string outro_nome = 7;                // vazio se o outro ativo já não existe
+}
+
+message ListaAlteracoesRegisto {
+  repeated AlteracaoRegisto alteracoes = 1;
+  repeated TransferenciaIdentidade transferencias = 2;
+}
+
+// ── Catálogo de fontes ───────────────────────────────────────────────────────
+
+message FontesReq {
+  string tenant_id = 1;
+  string locale = 2;
+  string destino = 3;                   // vazio = todos
+}
+
+// Coluna que o adaptador espera encontrar. Os SINÓNIMOS são o que faz o
+// mapeamento automático funcionar com exportações em idiomas diferentes.
+message CampoEsperado {
+  string chave = 1;                     // campo nosso (ex.: "nome")
+  string label = 2;                     // traduzido
+  string ajuda = 3;
+  bool obrigatorio = 4;
+  string tipo_dado = 5;                 // texto | inteiro | data | booleano | opcao
+  repeated string sinonimos = 6;        // cabeçalhos aceites na origem
+  // Domínio fechado de `tipo_dado = "opcao"` e o ponto de partida para traduzir
+  // valores da origem. O wizard precisa dos dois para oferecer o menu de
+  // equivalência (C11) e para MOSTRAR a conversão de escalas antes de aplicar —
+  // uma conversão que o utilizador não vê é uma conversão secreta.
+  repeated string opcoes = 7;
+  map<string, string> equivalencias = 8;
+}
+
+message FonteImportacao {
+  string id = 1;                        // "generico" | "glpi" | "monarc" | …
+  string nome = 2;
+  string descricao = 3;
+  string destino = 4;                   // inventario | risco | observacao
+  uint32 versao_perfil = 5;             // muda quando a interpretação muda
+  repeated string formatos = 6;         // "csv" | "json"
+  repeated CampoEsperado campos = 7;
+  string ajuda_exportacao = 8;          // como tirar o ficheiro da ferramenta
+  // A empresa tem o módulo onde esta fonte escreve? As indisponíveis vêm na
+  // lista à mesma, para o ecrã as poder mostrar esbatidas com a razão.
+  bool disponivel = 9;
+  string modulo_em_falta = 10;          // vazio quando disponível
+}
+
+message ListaFontes {
+  repeated FonteImportacao fontes = 1;
+}
+
+// ── Transporte: os bytes ─────────────────────────────────────────────────────
+
+// Primeiro chunk traz `meta`; os seguintes só `dados`. Mesmo desenho do
+// ChunkContexto do assistente e do BackupChunk.
+message ImportacaoChunk {
+  oneof parte {
+    MetaImportacao meta = 1;
+    bytes dados = 2;
+  }
+}
+
+message MetaImportacao {
+  string tenant_id = 1;
+  string fonte = 2;                     // id do adaptador escolhido
+  string destino = 3;
+  string ambito = 4;                    // "parcial" (omissão) | "completa"
+  string nome_ficheiro = 5;
+  string sha256 = 6;                    // calculado pelo core (idempotência)
+  string locale = 7;
+  Ator ator = 8;
+  // Só para observações (classe B): o contexto que o motor precisa para a régua
+  // dupla e para cruzar declaração×observação. Vazios nas classes de registo.
+  string perfil = 9;                    // nível QNRCS efetivo da empresa
+  map<string, string> declaracoes = 10; // código do controlo → estado declarado
+  // Travões que quem submete já viu e confirmou, um a um (ex.: "T3"). Só a
+  // classe B precisa deles aqui: não tem passo de simulação onde os confirmar,
+  // e um relatório recusado volta com a confirmação no mesmo cabeçalho.
+  repeated string travoes_confirmados = 11;
+}
+
+// ── Mapeamento (coluna da origem ↔ campo nosso) ──────────────────────────────
+
+message ColunaMapeada {
+  string coluna = 1;                    // cabeçalho na origem (ou caminho JSON)
+  string campo = 2;                     // campo nosso; vazio = ignorar a coluna
+  bool chave = 3;                       // participa na chave natural
+}
+
+// Tudo o que a interpretação precisa de saber fica DECLARADO aqui — nunca
+// adivinhado. Datas ambíguas e decimais com vírgula são erros clássicos de
+// importadores que inferem.
+message Mapeamento {
+  repeated ColunaMapeada colunas = 1;
+  string formato_data = 2;              // ex.: "dd/MM/yyyy"
+  string separador_decimal = 3;         // "," | "."
+  // Valor da origem → valor nosso (ex.: "Em stock" → "guardado"). A escolha do
+  // utilizador grava-se no perfil e não se volta a perguntar.
+  map<string, string> equivalencias = 4;
+  // Célula vazia numa coluna mapeada: por omissão é "não sei" (mantém o valor
+  // atual), não "apagar".
+  bool vazio_apaga = 5;
+}
+
+// ── Análise ──────────────────────────────────────────────────────────────────
+
+message LinhaBruta {
+  repeated string celulas = 1;
+}
+
+message AnaliseFicheiro {
+  string importacao_id = 1;             // UUID do staging
+  string formato = 2;                   // "csv" | "json"
+  string delimitador = 3;               // detetado por votação
+  string codificacao = 4;               // "utf-8" | "windows-1252"
+  int32 linhas_lidas = 5;
+  int32 bytes_lidos = 6;
+  repeated string cabecalhos = 7;       // como vieram, na ordem original
+  repeated LinhaBruta amostra = 8;      // primeiras linhas, para pré-visualizar
+  Mapeamento mapeamento_sugerido = 9;
+  string fonte_sugerida = 10;           // o que o reconhecimento diz ser
+  int32 confianca = 11;                 // 0..100 — abaixo do limiar, avisa
+  repeated string avisos = 12;          // códigos estáveis (o frontend traduz)
+  bool ja_importado = 13;               // mesmo sha256 já aplicado antes
+  string ja_importado_em = 14;          // RFC3339
+}
+
+// ── Simulação ────────────────────────────────────────────────────────────────
+
+message SimulacaoReq {
+  string tenant_id = 1;
+  string importacao_id = 2;
+  Mapeamento mapeamento = 3;
+  Ator ator = 4;
+}
+
+// Um problema numa linha nunca faz perder o ficheiro inteiro: identifica-se a
+// linha, diz-se o que está mal e o utilizador decide.
+message LinhaProblema {
+  int32 linha = 1;                      // número na origem (1 = cabeçalho)
+  string codigo = 2;                    // código estável do conflito (ex.: "C11")
+  string coluna = 3;
+  string valor = 4;
+  string detalhe = 5;
+  // A linha não pode ser escrita enquanto isto não se resolver. Por omissão um
+  // problema é um AVISO: o mesmo código tanto pode ser um campo obrigatório em
+  // falta como uma célula opcional por traduzir, e só quem o emitiu sabe qual.
+  bool bloqueia = 6;
+}
+
+// Correspondência duvidosa que precisa de decisão humana (ecrã de reconciliação).
+message CandidatoReconciliacao {
+  string id = 1;                        // registo nosso
+  string nome = 2;
+  string motivo = 3;                    // porque foi considerado candidato
+  int32 confianca = 4;                  // 0..100
+}
+
+message LinhaReconciliacao {
+  int32 linha = 1;
+  string rotulo = 2;                    // como a linha se apresenta ao humano
+  repeated CandidatoReconciliacao candidatos = 3;
+}
+
+message DiffImportacao {
+  string importacao_id = 1;
+  int32 novos = 2;
+  int32 atualizados = 3;
+  int32 ignorados = 4;
+  int32 ausentes = 5;                   // só em âmbito completo
+  int32 bloqueados = 6;                 // campos travados por edição humana
+  repeated LinhaProblema problemas = 7;
+  repeated LinhaReconciliacao reconciliacao = 8;
+  // Travões disparados (T1–T9). Não vazio = aplicar exige confirmação
+  // explícita, ou é recusado.
+  repeated string travoes = 9;
+  bool pode_aplicar = 10;
+  string carimbo = 11;                  // estado do universo na simulação
+}
+
+// ── Aplicação e histórico ────────────────────────────────────────────────────
+
+// Decisão humana tomada no ecrã de reconciliação. Fica gravada na procedência:
+// só se pergunta uma vez.
+message DecisaoReconciliacao {
+  int32 linha = 1;
+  string acao = 2;                      // "mesmo" | "novo" | "ignorar"
+  string alvo_id = 3;                   // preenchido quando acao = "mesmo"
+}
+
+message AplicarReq {
+  string tenant_id = 1;
+  string importacao_id = 2;
+  Mapeamento mapeamento = 3;
+  repeated DecisaoReconciliacao decisoes = 4;
+  string carimbo = 5;                   // o da simulação — se mudou, re-simular
+  repeated string travoes_confirmados = 6;
+  Ator ator = 7;
+}
+
+message ResumoImportacao {
+  string importacao_id = 1;
+  string estado = 2;                    // analisada|simulada|aplicada|revertida|falhada
+  int32 criados = 3;
+  int32 atualizados = 4;
+  int32 ignorados = 5;
+  int32 marcados_ausentes = 6;
+  int32 saltados = 7;                   // na reversão: tocados por humanos
+  repeated LinhaProblema problemas = 8;
+}
+
+message HistoricoReq {
+  string tenant_id = 1;
+  string fonte = 2;                     // vazio = todas
+  string destino = 3;
+  int32 limite = 4;
+  int32 offset = 5;
+}
+
+message ImportacaoResumida {
+  string id = 1;
+  string fonte = 2;
+  string destino = 3;
+  string ambito = 4;
+  string nome_ficheiro = 5;
+  string estado = 6;
+  int32 linhas = 7;
+  int32 criados = 8;
+  int32 atualizados = 9;
+  string data_origem = 10;              // data do export/scan, quando a fonte a traz
+  string criado_em = 11;
+  string autor_nome = 12;
+  uint32 versao_perfil = 13;
+  bool reversivel = 14;
+}
+
+message ListaImportacoes {
+  repeated ImportacaoResumida importacoes = 1;
+  int32 total = 2;
+}
+
+message ImportacaoRef {
+  string tenant_id = 1;
+  string id = 2;
+  Ator ator = 3;
+}
+
+message DetalheImportacaoResp {
+  ImportacaoResumida importacao = 1;
+  repeated LinhaProblema problemas = 2;
+  Mapeamento mapeamento = 3;
+  string sha256 = 4;
+}
+
+// ── Perfis de mapeamento do tenant ───────────────────────────────────────────
+
+message PerfilMapeamento {
+  string id = 1;
+  string tenant_id = 2;
+  string fonte = 3;
+  string nome = 4;
+  Mapeamento mapeamento = 5;
+  string atualizado_em = 6;
+  Ator ator = 7;
+}
+
+message PerfisReq {
+  string tenant_id = 1;
+  string fonte = 2;
+}
+
+message ListaPerfis {
+  repeated PerfilMapeamento perfis = 1;
+}
+
+// ── Classe B: observação técnica ─────────────────────────────────────────────
+
+message ResumoObservacao {
+  string importacao_id = 1;
+  string verificacao_id = 2;
+  string observado_em = 3;              // data do SCAN, nunca a do upload
+  int32 sinais_avaliados = 4;
+  int32 nao_conformes_politica = 5;
+  int32 nao_conformes_minimo = 6;
+  int32 indeterminados = 7;
+  int32 eventos_novos = 8;
+  bool duplicado = 9;                   // mesmo relatório já importado
+  repeated string avisos = 10;
+  // Cruzamento com o inventário. As descobertas são PROPOSTAS de equipamentos
+  // que o relatório viu e o inventário não conhece — nunca criadas sozinhas: um
+  // scan devolve impressoras, telemóveis de visita e IPs de DHCP, e enchê-lo
+  // disso é a forma mais rápida de o utilizador deixar de confiar no registo.
+  int32 ativos_sem_cobertura = 11;
+  // Lista com teto (nomes para mostrar). O número real de máquinas vistas fora
+  // do inventário é `total_descobertas` — contar pelo tamanho da lista dava um
+  // número que baixava sozinho a partir do teto.
+  repeated string descobertas = 12;
+  int32 total_descobertas = 13;
 }

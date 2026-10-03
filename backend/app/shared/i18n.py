@@ -150,6 +150,159 @@ class MsgsI18n:
         ),
     }
 
+    # Anonimização (RGPD Art. 17) travada porque o módulo premium não respondeu.
+    ANONIMIZACAO_PREMIUM_INDISPONIVEL = {
+        "pt": (
+            "O módulo premium não respondeu e guarda cópias do nome desta pessoa. "
+            "A anonimização não foi feita — tente de novo dentro de momentos."
+        ),
+        "en": (
+            "The premium module did not respond and holds copies of this person's name. "
+            "The anonymisation was not carried out — please try again shortly."
+        ),
+    }
+
+    # Email de teste enviado a partir das definições de email.
+    EMAIL_TESTE_ASSUNTO = {
+        "pt": "[NIS2PME] Email de teste",
+        "en": "[NIS2PME] Test email",
+    }
+    EMAIL_TESTE_CORPO = {
+        "pt": (
+            "Este é um email de teste enviado a partir das definições da plataforma.\n\n"
+            "Se o recebeu, o servidor de saída de correio está a funcionar.\n\n— NIS2PME"
+        ),
+        "en": (
+            "This is a test email sent from the platform settings.\n\n"
+            "If you received it, the outgoing mail server is working.\n\n— NIS2PME"
+        ),
+    }
+
+    # A mesma prova já existe na empresa (409). O utilizador escolhe entre
+    # ligá-la a mais este controlo ou guardar mesmo uma segunda cópia.
+    EVIDENCIA_JA_EXISTE = {
+        "pt": (
+            "Já tem este ficheiro nas suas evidências ({titulo}). "
+            "Pode ligá-lo também a este controlo, em vez de guardar outra cópia."
+        ),
+        "en": (
+            "You already have this file in your evidence ({titulo}). "
+            "You can link it to this control as well, instead of storing a second copy."
+        ),
+    }
+    EVIDENCIA_JA_LIGADA = {
+        "pt": "Esta evidência já sustenta este controlo ({titulo}).",
+        "en": "This evidence already supports this control ({titulo}).",
+    }
+
+    # Desligar a última prova de um controlo que está dado como feito (409 até
+    # ser confirmado). Não se impede — avisa-se, porque quem tira a prova pode
+    # ter razão; o que não pode é acontecer sem ninguém dar por isso.
+    EVIDENCIA_ULTIMA_PROVA = {
+        "pt": (
+            "Esta é a única prova do controlo {controlo}, que está declarado como "
+            "«{estado}». Se a retirar, o controlo fica sem prova."
+        ),
+        "en": (
+            "This is the only evidence for control {controlo}, which is declared as "
+            "\"{estado}\". Removing it leaves the control without proof."
+        ),
+    }
+
+    # Duas pessoas a rever o mesmo documento (409). Quem chega em segundo
+    # escreveria por cima de uma revisão que não viu, e a cadeia de versões
+    # bifurcava — a história deixaria de ter uma linha só.
+    EVIDENCIA_VERSAO_DESATUALIZADA = {
+        "pt": (
+            "Esta evidência já foi revista entretanto. Veja a versão mais recente "
+            "antes de a substituir."
+        ),
+        "en": (
+            "This evidence has already been revised in the meantime. Review the "
+            "latest version before replacing it."
+        ),
+    }
+
+    # Impacto de um apagamento a pedido do titular, mostrado ANTES de executar.
+    # É irreversível e atravessa a retenção: quem o faz tem de ver quantos
+    # controlos ficam sem esta prova antes de confirmar, e não depois.
+    EVIDENCIA_APAGAMENTO_IMPACTO = {
+        "pt": (
+            "São apagadas {v} evidência(s) (a cadeia de versões e as cópias com o "
+            "mesmo conteúdo). {n} controlo(s) ficam sem esta prova e {d} dossiê(s) "
+            "exportado(s) podem tê-la levado. O conteúdo é apagado de forma "
+            "irreversível e fica apenas o registo de que existiu."
+        ),
+        "en": (
+            "{v} evidence item(s) will be erased (the version chain and copies with "
+            "the same content). {n} control(s) will be left without this proof and "
+            "{d} exported dossier(s) may have included it. The content is erased "
+            "irreversibly and only the record that it existed remains."
+        ),
+    }
+
+    # Apagar definitivamente só se faz a partir da reciclagem (409). Uma prova
+    # ligada a controlos retira-se primeiro — e retirar tem desfazer.
+    EVIDENCIA_LIGADA_NAO_APAGA = {
+        "pt": (
+            "Esta evidência ainda sustenta {n} controlo(s). Retire-a primeiro; "
+            "depois pode apagá-la de vez a partir da reciclagem."
+        ),
+        "en": (
+            "This evidence still supports {n} control(s). Remove it first; you can "
+            "then erase it permanently from the recycle bin."
+        ),
+    }
+
+    # Restaurar só faz sentido a partir da reciclagem (409).
+    EVIDENCIA_NAO_ESTA_NA_RECICLAGEM = {
+        "pt": "Esta evidência não está na reciclagem: ainda sustenta pelo menos um controlo.",
+        "en": "This evidence is not in the recycle bin: it still supports at least one control.",
+    }
+
+    # Restaurar uma versão substituída duplicaria a prova (409).
+    EVIDENCIA_VERSAO_SUBSTITUIDA = {
+        "pt": (
+            "Esta versão foi substituída por uma mais recente, que já sustenta os "
+            "controlos de onde saiu. Veja as versões em vez de a restaurar."
+        ),
+        "en": (
+            "This version was replaced by a newer one, which already supports the "
+            "controls it came from. See the versions instead of restoring it."
+        ),
+    }
+
+    # Não se sabe de onde saiu (evidência antiga, sem histórico de ligações).
+    EVIDENCIA_SEM_ORIGEM = {
+        "pt": "Não se sabe de que controlo esta evidência saiu. Ligue-a a um controlo à escolha.",
+        "en": "It is not known which control this evidence came from. Link it to a control of your choice.",
+    }
+
+    # Nenhum dos controlos de origem é operável por quem restaura (403).
+    EVIDENCIA_SEM_PERMISSAO_ORIGEM = {
+        "pt": (
+            "Não pode restaurar esta evidência: não trabalha em nenhum dos controlos "
+            "de onde saiu. Ligue-a a um controlo seu, ou peça à administração."
+        ),
+        "en": (
+            "You cannot restore this evidence: you do not work on any of the controls "
+            "it came from. Link it to one of your controls, or ask an administrator."
+        ),
+    }
+
+    # Uma prova retida não sai pelo apagar definitivamente (409): só pelo
+    # apagamento com lápide, que é da administração e fica fundamentado.
+    EVIDENCIA_RETIDA = {
+        "pt": (
+            "Esta evidência já foi prova ({motivos}) e está retida. Só a "
+            "administração a pode apagar, com o apagamento com lápide."
+        ),
+        "en": (
+            "This evidence has already served as proof ({motivos}) and is retained. "
+            "Only administrators can erase it, using erasure with a tombstone."
+        ),
+    }
+
     # Disco do servidor sem espaço ao gravar o ficheiro (507).
     DISCO_SEM_ESPACO = {
         "pt": (
@@ -160,6 +313,81 @@ class MsgsI18n:
             "Could not save the file: insufficient disk space on the server. "
             "Contact the administrator."
         ),
+    }
+
+    # ── Incidentes (notificações do Regime Jurídico da Cibersegurança) ──────
+    INCIDENTE_CATEGORIA_INVALIDA = {
+        "pt": "Tipo de incidente desconhecido na taxonomia.",
+        "en": "Unknown incident type in the taxonomy.",
+    }
+    # {campo} = nome técnico do campo.
+    INCIDENTE_DATA_FUTURA = {
+        "pt": "A data «{campo}» não pode estar no futuro.",
+        "en": "The date “{campo}” cannot be in the future.",
+    }
+    INCIDENTE_ANTES_DO_CONHECIMENTO = {
+        "pt": "A data «{campo}» não pode ser anterior à data em que o incidente foi conhecido.",
+        "en": "The date “{campo}” cannot be earlier than the date the incident became known.",
+    }
+    INCIDENTE_FIM_ANTES_DO_INICIO = {
+        "pt": "O fim do impacto significativo não pode ser anterior ao seu início.",
+        "en": "The end of the significant impact cannot be earlier than its start.",
+    }
+    INCIDENTE_EMAIL_INVALIDO = {
+        "pt": "O email do representante não é válido.",
+        "en": "The representative's email is not valid.",
+    }
+    INCIDENTE_UTILIZADORES_INVALIDOS = {
+        "pt": "O número de utilizadores afetados não pode ser maior do que o total.",
+        "en": "The number of affected users cannot be greater than the total.",
+    }
+    INCIDENTE_TIPO_NOTIFICACAO_INVALIDO = {
+        "pt": "Tipo de notificação inválido.",
+        "en": "Invalid notification type.",
+    }
+    INCIDENTE_CANAL_INVALIDO = {
+        "pt": "Canal de envio inválido.",
+        "en": "Invalid delivery channel.",
+    }
+    INCIDENTE_NOTIFICACAO_JA_REGISTADA = {
+        "pt": "Esta notificação já foi registada como enviada.",
+        "en": "This notification has already been recorded as sent.",
+    }
+    INCIDENTE_FIM_IMPACTO_SEM_DATA = {
+        "pt": "Indique primeiro a data e hora do fim do impacto significativo.",
+        "en": "First enter the date and time the significant impact ended.",
+    }
+    INCIDENTE_CNPD_NAO_APLICAVEL = {
+        "pt": "A notificação à CNPD só se regista num incidente com violação de dados pessoais.",
+        "en": "The notification to the CNPD can only be recorded for an incident involving a personal data breach.",
+    }
+    INCIDENTE_COM_NOTIFICACOES = {
+        "pt": "Este incidente tem notificações enviadas e não pode ser eliminado.",
+        "en": "This incident has sent notifications and cannot be deleted.",
+    }
+
+    # ── Trilha de auditoria ─────────────────────────────────────────────────
+    # {campo} = nome do parâmetro do pedido (data_inicio, data_fim).
+    AUDIT_DATA_INVALIDA = {
+        "pt": "Formato inválido para {campo}. Use ISO 8601, por exemplo 2026-04-10T05:55:07+00:00.",
+        "en": "Invalid format for {campo}. Use ISO 8601, for example 2026-04-10T05:55:07+00:00.",
+    }
+    AUDIT_FAMILIA_DESCONHECIDA = {
+        "pt": "Família desconhecida: {familia}.",
+        "en": "Unknown family: {familia}.",
+    }
+    # A exportação CSV recusa seleções grandes demais (422): {total} registos
+    # escolhidos, {maximo} o teto por exportação.
+    AUDIT_EXPORTACAO_EXCEDE_MAXIMO = {
+        "pt": "A seleção tem {total} registos e o máximo por exportação é {maximo}. Restrinja o intervalo de datas.",
+        "en": "The selection has {total} records and the maximum per export is {maximo}. Narrow the date range.",
+    }
+
+    # ── Análise de risco ────────────────────────────────────────────────────
+    # O tratamento aponta para um controlo que não é do referencial da empresa (400).
+    RISCO_CONTROLO_INVALIDO = {
+        "pt": "O controlo escolhido não existe no referencial desta empresa. Escolha outro controlo ou deixe o campo vazio.",
+        "en": "The selected control does not exist in this company's framework. Choose another control or leave the field empty.",
     }
 
 

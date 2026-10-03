@@ -6,3 +6,8 @@ frontend/
 *.pyo
 .git/
 .env
+
+# The test suite is not part of the runtime image: nothing imports it at
+# runtime, and a copy frozen at build time only grows more misleading as the
+# code moves on.
+backend/tests/

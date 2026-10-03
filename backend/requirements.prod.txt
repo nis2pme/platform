@@ -30,15 +30,34 @@ psycopg2-binary==2.9.11
 python-jose[cryptography]==3.5.0
 argon2-cffi==23.1.0
 pyotp==2.9.0
-cryptography==49.0.0
+# Motor de toda a cifra em repouso: PII, evidências, segredos TOTP e os backups
+# `.nbk`. Esteve presa na 49 porque o `fastapi-mail` exigia `cryptography<50.0.0`;
+# ao deixar de haver `fastapi-mail` (ver a secção Email) o limite caiu, e a 50
+# fecha o PYSEC-2026-3552. Subir uma major aqui obriga a provar que um `.nbk`
+# antigo continua a abrir — não basta a suite passar.
+cryptography==50.0.0
 python-multipart==0.0.32
 
 # --- Email ---
-# smtp (on-prem) via fastapi-mail; resend (SaaS) via stdlib urllib — sem SDK dedicado.
-fastapi-mail==1.6.5
+# smtp (on-prem) via aiosmtplib; resend (SaaS) via stdlib urllib — sem SDK dedicado.
+#
+# O `fastapi-mail` saiu daqui: era um invólucro fino sobre o aiosmtplib (é ele que
+# fala SMTP, também antes), usado num só ficheiro, e prendia a cryptography abaixo
+# da 50. Falar com o aiosmtplib diretamente tirou o intermediário e sete
+# dependências transitivas — jinja2, httpx, blinker e regex saíram por arrasto,
+# nenhuma delas importada pelo core.
+aiosmtplib==5.1.2
+# Exigida pelo `pydantic.EmailStr` (auth, setup, sistema, utilizadores). Vinha
+# instalada às cavalitas do fastapi-mail; sem esta linha a app não arranca.
+email-validator==2.3.0
 
 # --- Rate limiting ---
 slowapi==0.1.9
+
+# --- Dossiê de auditoria (.nis2pme) ---
+# age (implementação de referência em Rust, via bindings): cifra do corpo do
+# dossiê — streaming autenticado com destinatários passphrase e X25519.
+pyrage==1.3.0
 
 # --- Ficheiros e documentos ---
 aiofiles==25.1.0
@@ -49,4 +68,4 @@ aiofiles==25.1.0
 # pynacl: selagem de envelope (X25519 sealed box) do payload de cliente antes de sair
 # do core para o sidecar (custódia de dados). Os stubs do proto são gerados no build.
 grpcio==1.68.1
-pynacl==1.5.0
+pynacl==1.6.2

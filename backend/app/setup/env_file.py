@@ -57,7 +57,9 @@ def atualizar_env(updates: dict[str, str], comentario: str | None = None) -> Non
     if pendentes:
         if comentario:
             novas_linhas.append("")
-            novas_linhas.append(comentario)
+            # Sem o `#`, o docker compose lê a linha como variável e recusa o .env
+            # inteiro — e a instalação deixa de arrancar.
+            novas_linhas.append(comentario if comentario.lstrip().startswith("#") else f"# {comentario}")
         for chave, valor in pendentes.items():
             novas_linhas.append(f"{chave}={formatar_valor(str(valor))}")
 

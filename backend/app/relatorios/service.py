@@ -32,10 +32,8 @@ from app.controlos.service import (
 )
 from app.empresas.models import Empresa
 from app.frameworks.models import (
-    Control,
     ControlLocale,
     ControloEmpresaV2,
-    Domain,
     DomainLocale,
     Framework,
 )
@@ -50,7 +48,6 @@ from app.relatorios.schemas import (
     ExportacaoUtilizadorSchema,
     GapControloSchema,
     HistoricoDashboardSchema,
-    HistoricoEntradaSchema,
     HistoricoExportacaoItemSchema,
     HistoricoExportacoesSchema,
     HistoricoSemanalPontoSchema,
@@ -62,7 +59,7 @@ from app.relatorios.schemas import (
 )
 from app.shared.audit import Acao, ResultadoAcao, registar_acao
 from app.shared.pii import decifrar_pii
-from app.shared.scoring import calcular_score_global
+from app.shared.scoring import calcular_score_global, controlo_aplicavel
 from app.shared.utils import resolver_locale
 
 logger = logging.getLogger(__name__)
@@ -74,54 +71,94 @@ SEMANAS_EVOLUCAO_DASHBOARD = 24
 # ---------------------------------------------------------------------------
 
 
-def _estado_geral_texto(percentagem: float, conforme: bool) -> str:
-    """Gera texto de estado em linguagem não técnica para o resumo executivo."""
-    if conforme and percentagem >= 80:
-        return (
-            "A sua organização atingiu o nível de conformidade exigido pela lei "
-            "de cibersegurança. Continue a manter e melhorar as medidas implementadas."
-        )
-    if percentagem >= 60:
-        return (
+_EXECUTIVO_TEXTOS = {
+    "pt": {
+        "estado_80": (
+            "A sua organização atingiu o nível de conformidade exigido pelo Regime Jurídico "
+            "da Cibersegurança (RJC). Continue a manter e melhorar as medidas implementadas."
+        ),
+        "estado_60": (
             "A sua organização está no bom caminho para a conformidade, mas ainda "
             "existem medidas importantes por implementar. Priorize os controlos críticos."
-        )
+        ),
+        "estado_30": (
+            "A sua organização está a iniciar o processo de conformidade com o Regime "
+            "Jurídico da Cibersegurança (RJC). É necessário agir com urgência nas medidas prioritárias."
+        ),
+        "estado_0": (
+            "A sua organização ainda não iniciou a implementação das medidas exigidas "
+            "pelo Regime Jurídico da Cibersegurança (RJC). Recomenda-se iniciar imediatamente as medidas críticas."
+        ),
+        "passo_criticos": (
+            "Implementar os {n} controlos críticos em falta — "
+            "estes são obrigatórios e bloqueiam a conformidade geral."
+        ),
+        "passo_responsavel": "Atribuir um responsável aos {n} controlos ainda sem responsável.",
+        "passo_aprovar": (
+            "Solicitar aprovação dos {n} controlos já implementados mas ainda pendentes de validação."
+        ),
+        "passo_manter": "Manter as medidas implementadas e rever periodicamente o estado de conformidade.",
+    },
+    "en": {
+        "estado_80": (
+            "Your organisation has reached the level of compliance required by the "
+            "Portuguese Cybersecurity Legal Framework (RJC). Keep maintaining and improving the measures in place."
+        ),
+        "estado_60": (
+            "Your organisation is on track for compliance, but important measures are "
+            "still to be implemented. Prioritise the critical controls."
+        ),
+        "estado_30": (
+            "Your organisation is starting the compliance process under the Portuguese "
+            "Cybersecurity Legal Framework (RJC). Urgent action is needed on the priority measures."
+        ),
+        "estado_0": (
+            "Your organisation has not yet started implementing the measures required by "
+            "the Portuguese Cybersecurity Legal Framework (RJC). Start the critical measures immediately."
+        ),
+        "passo_criticos": (
+            "Implement the {n} missing critical controls — they are mandatory and block overall compliance."
+        ),
+        "passo_responsavel": "Assign an owner to the {n} controls that still have none.",
+        "passo_aprovar": "Request approval of the {n} controls already implemented but still pending validation.",
+        "passo_manter": "Maintain the measures in place and review the compliance status periodically.",
+    },
+}
+
+
+def _textos_executivo(locale: str | None) -> dict:
+    return _EXECUTIVO_TEXTOS.get((locale or "pt").split("-")[0].lower(), _EXECUTIVO_TEXTOS["pt"])
+
+
+def _estado_geral_texto(percentagem: float, conforme: bool, locale: str | None = None) -> str:
+    """Gera texto de estado em linguagem não técnica para o resumo executivo."""
+    t = _textos_executivo(locale)
+    if conforme and percentagem >= 80:
+        return t["estado_80"]
+    if percentagem >= 60:
+        return t["estado_60"]
     if percentagem >= 30:
-        return (
-            "A sua organização está a iniciar o processo de conformidade com a lei "
-            "de cibersegurança. É necessário agir com urgência nas medidas prioritárias."
-        )
-    return (
-        "A sua organização ainda não iniciou a implementação das medidas exigidas "
-        "pela lei de cibersegurança. Recomenda-se iniciar imediatamente as medidas críticas."
-    )
+        return t["estado_30"]
+    return t["estado_0"]
 
 
 def _proximos_passos(
     controlos_criticos_nc: int,
     sem_implementador: int,
     por_aprovar: int,
+    locale: str | None = None,
 ) -> list[str]:
     """Gera lista de próximos passos prioritários em linguagem não técnica."""
+    t = _textos_executivo(locale)
     passos = []
     if controlos_criticos_nc > 0:
-        passos.append(
-            f"Implementar os {controlos_criticos_nc} controlos críticos em falta — "
-            "estes são obrigatórios e bloqueiam a conformidade geral."
-        )
+        passos.append(t["passo_criticos"].format(n=controlos_criticos_nc))
     if sem_implementador > 0:
-        passos.append(
-            f"Atribuir um responsável aos {sem_implementador} controlos ainda sem responsável."
-        )
+        passos.append(t["passo_responsavel"].format(n=sem_implementador))
     if por_aprovar > 0:
-        passos.append(
-            f"Solicitar aprovação dos {por_aprovar} controlos já implementados "
-            "mas ainda pendentes de validação."
-        )
+        passos.append(t["passo_aprovar"].format(n=por_aprovar))
     if not passos:
-        passos.append(
-            "Manter as medidas implementadas e rever periodicamente o estado de conformidade."
-        )
+        passos.append(t["passo_manter"])
     return passos
 
 
@@ -327,6 +364,9 @@ def _build_v2_scores_dominio(
     score_por_dominio: dict[str, int] = {}
     controlos_criticos: list[ControloEmpresaV2] = []
 
+    # "Não aplicável" fora de todas as contas (este builder só produz scores).
+    rows = [row for row in rows if controlo_aplicavel(row.ce)]
+
     for row in rows:
         accumulator = _get_or_create_v2_domain_accumulator(
             accumulators,
@@ -398,9 +438,14 @@ def gerar_relatorio_conformidade(
     empresa: Empresa,
     utilizador: Utilizador,
     request: Request | None = None,
+    auditar: bool = True,
 ) -> RelatorioConformidadeSchema:
-    """Gera o relatório detalhado de conformidade — V2."""
-    return _gerar_relatorio_conformidade_v2(db, empresa, utilizador, request)
+    """Gera o relatório detalhado de conformidade — V2.
+
+    `auditar=False` quando o relatório é um ingrediente de outra operação já
+    auditada (ex.: dossiê de auditoria) — evita entradas duplicadas no log.
+    """
+    return _gerar_relatorio_conformidade_v2(db, empresa, utilizador, request, auditar)
 
 
 # ---------------------------------------------------------------------------
@@ -411,6 +456,7 @@ def _gerar_relatorio_conformidade_v2(
     empresa: Empresa,
     utilizador: Utilizador,
     request: Request | None = None,
+    auditar: bool = True,
 ) -> RelatorioConformidadeSchema:
     framework = db.get(Framework, empresa.framework_id)
     if not framework:
@@ -467,13 +513,17 @@ def _gerar_relatorio_conformidade_v2(
         )
         critico = row.control.criticality == "critical"
         obrigatorio = row.control.id in controlos_obrigatorios_ids
-        conforme = row.ce.nivel_maturidade_atual >= nivel_min
-        gap = max(0, nivel_min - row.ce.nivel_maturidade_atual)
+        # "Não aplicável": listado (com justificação) mas fora das contas —
+        # nem conforme nem gap, e não arrasta o score mínimo do domínio.
+        nao_aplicavel = not controlo_aplicavel(row.ce)
+        conforme = (not nao_aplicavel) and row.ce.nivel_maturidade_atual >= nivel_min
+        gap = 0 if nao_aplicavel else max(0, nivel_min - row.ce.nivel_maturidade_atual)
 
-        accumulator.score = min(
-            accumulator.score,
-            row.ce.nivel_maturidade_atual,
-        )
+        if not nao_aplicavel:
+            accumulator.score = min(
+                accumulator.score,
+                row.ce.nivel_maturidade_atual,
+            )
         if obrigatorio:
             accumulator.total_controlos += 1
             accumulator.niveis_minimos.append(nivel_min)
@@ -507,6 +557,11 @@ def _gerar_relatorio_conformidade_v2(
                     decifrar_pii(implementador.nome) if implementador else None
                 ),
                 data_aprovacao=row.ce.data_aprovacao,
+                na_justificacao=(
+                    decifrar_pii(row.ce.na_justificacao)
+                    if nao_aplicavel and row.ce.na_justificacao
+                    else None
+                ),
             )
         )
 
@@ -559,7 +614,7 @@ def _gerar_relatorio_conformidade_v2(
         gerado_por_role=utilizador.role,
         versao_framework=f"{framework.registry_id}",
         empresa_id=empresa.id,
-        empresa_nome=decifrar_pii(empresa.nome),
+        empresa_nome=decifrar_pii(empresa.nome) or "",
         empresa_tipo_entidade=empresa.tipo_entidade.value,
         empresa_setor=empresa.setor,
         score_global=score_global,
@@ -571,12 +626,13 @@ def _gerar_relatorio_conformidade_v2(
         controlos_criticos_nao_conformes=criticos_nc,
     )
 
-    registar_acao(
-        db, acao=Acao.RELATORIO_EXPORTADO, resultado=ResultadoAcao.SUCESSO,
-        empresa_id=empresa.id, utilizador_id=utilizador.id,
-        dados_novos={"tipo": "conformidade", "id": str(relatorio.id)}, request=request,
-    )
-    db.commit()
+    if auditar:
+        registar_acao(
+            db, acao=Acao.RELATORIO_EXPORTADO, resultado=ResultadoAcao.SUCESSO,
+            empresa_id=empresa.id, utilizador_id=utilizador.id,
+            dados_novos={"tipo": "conformidade", "id": str(relatorio.id)}, request=request,
+        )
+        db.commit()
     return relatorio
 
 
@@ -705,7 +761,7 @@ def _gerar_relatorio_gap_v2(
         id=uuid.uuid4(),
         gerado_em=datetime.now(timezone.utc),
         empresa_id=empresa.id,
-        empresa_nome=decifrar_pii(empresa.nome),
+        empresa_nome=decifrar_pii(empresa.nome) or "",
         empresa_tipo_entidade=empresa.tipo_entidade.value,
         score_global=score_global,
         percentagem_conformidade_global=round(perc_global, 1),
@@ -838,7 +894,7 @@ def gerar_resumo_executivo(
         id=uuid.uuid4(),
         gerado_em=datetime.now(timezone.utc),
         empresa_id=empresa.id,
-        empresa_nome=decifrar_pii(empresa.nome),
+        empresa_nome=decifrar_pii(empresa.nome) or "",
         empresa_tipo_entidade=empresa.tipo_entidade.value,
         percentagem_conformidade_global=round(perc_global, 1),
         score_global=score_global,
@@ -848,8 +904,8 @@ def gerar_resumo_executivo(
         numero_controlos_criticos_nao_conformes=criticos_nc,
         numero_controlos_sem_implementador=sem_impl,
         numero_controlos_por_aprovar=por_aprovar,
-        estado_geral=_estado_geral_texto(perc_global, conforme),
-        proximos_passos=_proximos_passos(criticos_nc, sem_impl, por_aprovar),
+        estado_geral=_estado_geral_texto(perc_global, conforme, locale),
+        proximos_passos=_proximos_passos(criticos_nc, sem_impl, por_aprovar, locale),
     )
 
     registar_acao(
@@ -953,10 +1009,97 @@ def exportar_dados_empresa(
         for s in snapshots
     ]
 
+    # Os restantes registos da empresa, como REFERÊNCIAS (identificação, datas,
+    # estado, quem): é o que a portabilidade exige. O conteúdo — descrição dos
+    # incidentes, texto e ficheiros das evidências — fica de fora, como os
+    # ficheiros sempre ficaram: são dados da empresa, não da pessoa.
+    from app.evidencias.models import Evidencia
+    from app.formacao.models import AcaoFormacao, ParticipanteFormacao
+    from app.incidentes.models import Incidente
+    from app.tarefas.models import Tarefa
+
+    def _iso(valor):
+        return valor.isoformat() if valor else None
+
+    def _valor(enum_ou_str):
+        return getattr(enum_ou_str, "value", enum_ou_str)
+
+    incidentes = [
+        {
+            "id": str(i.id),
+            "titulo": i.titulo,
+            "categoria": getattr(i, "categoria", None),
+            "severidade": _valor(i.severidade),
+            "estado": _valor(i.estado),
+            "significativo": i.significativo,
+            "responsavel_id": str(i.responsavel_id) if i.responsavel_id else None,
+            "conhecido_at": _iso(i.conhecido_at),
+        }
+        for i in db.exec(
+            select(Incidente).where(Incidente.empresa_id == empresa.id, Incidente.deleted_at.is_(None))
+        ).all()
+    ]
+    tarefas = [
+        {
+            "id": str(t.id),
+            "titulo": t.titulo,
+            "periodicidade": _valor(t.periodicidade),
+            "responsavel_id": str(t.responsavel_id) if t.responsavel_id else None,
+            "proximo_prazo": _iso(t.proximo_prazo),
+        }
+        for t in db.exec(
+            select(Tarefa).where(Tarefa.empresa_id == empresa.id, Tarefa.deleted_at.is_(None))
+        ).all()
+    ]
+    acoes = db.exec(
+        select(AcaoFormacao).where(AcaoFormacao.empresa_id == empresa.id, AcaoFormacao.deleted_at.is_(None))
+    ).all()
+    participantes_por_acao: dict = {}
+    if acoes:
+        for p in db.exec(
+            select(ParticipanteFormacao).where(ParticipanteFormacao.acao_id.in_([a.id for a in acoes]))
+        ).all():
+            participantes_por_acao.setdefault(p.acao_id, []).append(
+                {
+                    "utilizador_id": str(p.utilizador_id) if p.utilizador_id else None,
+                    "nome": decifrar_pii(p.nome) or "",
+                    "orgao_gestao": p.orgao_gestao,
+                    "presente": p.presente,
+                }
+            )
+    formacoes = [
+        {
+            "id": str(a.id),
+            "titulo": a.titulo,
+            "formato": a.formato,
+            "estado": _valor(a.estado),
+            "data": _iso(a.data),
+            "orgao_gestao": a.orgao_gestao,
+            "responsavel_id": str(a.responsavel_id) if a.responsavel_id else None,
+            "participantes": participantes_por_acao.get(a.id, []),
+        }
+        for a in acoes
+    ]
+    evidencias = [
+        {
+            "id": str(e.id),
+            "titulo": e.titulo,
+            "tipo": _valor(e.tipo),
+            "ficheiro_nome": decifrar_pii(e.ficheiro_nome) if e.ficheiro_nome else None,
+            "ficheiro_tipo": e.ficheiro_tipo,
+            "ficheiro_tamanho": e.ficheiro_tamanho,
+            "uploaded_by_id": str(e.uploaded_by_id) if e.uploaded_by_id else None,
+            "created_at": _iso(e.created_at),
+        }
+        for e in db.exec(
+            select(Evidencia).where(Evidencia.empresa_id == empresa.id, Evidencia.deleted_at.is_(None))
+        ).all()
+    ]
+
     exportacao = ExportacaoDadosSchema(
         exportado_em=datetime.now(timezone.utc),
         empresa_id=empresa.id,
-        empresa_nome=decifrar_pii(empresa.nome),
+        empresa_nome=decifrar_pii(empresa.nome) or "",
         empresa_nif=decifrar_pii(empresa.nif),
         empresa_email=decifrar_pii(empresa.email),
         empresa_setor=empresa.setor,
@@ -964,6 +1107,10 @@ def exportar_dados_empresa(
         utilizadores=utils_schema,
         estado_controlos=estado_controlos,
         historico_maturidade=historico,
+        incidentes=incidentes,
+        tarefas=tarefas,
+        formacoes=formacoes,
+        evidencias=evidencias,
     )
 
     registar_acao(

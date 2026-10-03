@@ -6,10 +6,13 @@ entidades têm empresa_id como FK obrigatória.
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Column, JSON
+from sqlalchemy import Column, JSON, Text
 from sqlmodel import Field, Relationship, SQLModel
+
+if TYPE_CHECKING:  # só para as anotações da relação; evita o import circular
+    from app.auth.models import Utilizador
 
 
 class DimensaoEmpresa(str, Enum):
@@ -26,13 +29,13 @@ class DimensaoEmpresa(str, Enum):
 
 class TipoEntidade(str, Enum):
     """
-    Classificação ao abrigo do DL 125/2025 (transposição NIS2).
+    Classificação ao abrigo do RJC (transposição da NIS2).
     Classificação legal — depende do setor e dimensão da empresa.
     """
 
     BASE = "base"              # micro/PME sem obrigações NIS2 explícitas
-    IMPORTANTE = "importante"  # Anexo II DL 125/2025
-    ESSENCIAL = "essencial"    # Anexo I DL 125/2025 — requisitos mais exigentes
+    IMPORTANTE = "importante"  # Anexo II do RJC
+    ESSENCIAL = "essencial"    # Anexo I do RJC — requisitos mais exigentes
 
 
 class NivelQNRCS(str, Enum):
@@ -91,6 +94,24 @@ class Empresa(SQLModel, table=True):
 
     # Locale preferido — usado em todas as queries de conteúdo textual dos frameworks
     locale_preferido: str = Field(default="pt", max_length=10)
+
+    # Chave Ed25519 com que ESTA empresa assina os dossiês para o auditor —
+    # uma por empresa, não por instalação: em SaaS, uma chave partilhada
+    # faria todos os clientes apresentarem a mesma identidade ao auditor.
+    # Privada cifrada em repouso (como a PII); gerada no primeiro uso.
+    dossie_chave_priv: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    dossie_chave_pub: str | None = Field(default=None, max_length=64)
+    dossie_chave_criada_em: datetime | None = Field(default=None)
+
+    # Plano comercial pedido no registo (SaaS) e o instante em que o gateway
+    # confirmou o provisionamento dos direitos. Vazios em on-prem. `plano`
+    # preenchido com `plano_provisionado_em` a None = por reconciliar (tick).
+    plano: str | None = Field(default=None, max_length=32)
+    plano_provisionado_em: datetime | None = Field(default=None)
+    # Fim do período de avaliação (SaaS, plano "trial"). A data é a da borda de
+    # registo — é ela que suspende a conta — e é a mesma que segue para o
+    # gateway; daqui lê-se o aviso de fim do trial. Vazia nos restantes casos.
+    trial_expira_em: datetime | None = Field(default=None)
 
     # Timestamps — geridos automaticamente
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

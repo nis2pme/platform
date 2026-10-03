@@ -50,14 +50,15 @@ services:
     image: ghcr.io/nis2pme/backend:latest
     container_name: nis2pme_backend
     restart: unless-stopped
-    # Hardening base: sem capabilities (uvicorn não precisa), sem escalonamento, limites.
+    # Hardening base: sem escalonamento, limites, e só as capabilities do arranque.
+    # O entrypoint arranca como root APENAS para reparar a posse dos volumes e do .env
+    # do host (ficheiros com dono root — de versões antigas, backups ou intervenções
+    # manuais — deixavam a app em crash-loop após upgrade) e baixa de imediato para o
+    # uid 10001 via setpriv: o uvicorn nunca corre como root.
+    # CHOWN + DAC_OVERRIDE: reparação de posse; SETUID + SETGID: baixar privilégios.
     security_opt: ["no-new-privileges:true"]
     cap_drop: [ALL]
-    # DAC_OVERRIDE: o .env do host é montado abaixo (:80) para o wizard poder gravar
-    # config SMTP; o dono/permissões desse ficheiro no host raramente coincidem com o
-    # uid 10001 do container (ex.: criado por root com chmod 600) — sem esta cap, a
-    # app fica sem conseguir ler nem escrever /app/.env ("Permission denied").
-    cap_add: [DAC_OVERRIDE]
+    cap_add: [CHOWN, SETUID, SETGID, DAC_OVERRIDE]
     mem_limit: ${BACKEND_MEM_LIMIT:-1g}
     cpus: ${BACKEND_CPUS:-1.0}
     pids_limit: 512
@@ -74,6 +75,11 @@ services:
       DEPLOYMENT_MODE: onprem
       FRAMEWORKS_DIR: /app/frameworks
       NGINX_CONFIG_DIR: /app/nginx_config
+      # Chave pública mestra NIS2PME (valida atestações de chave do dossiê).
+      # Por omissão, a da raiz de produção: sem ela a app não dá erro nenhum —
+      # só passa a pedir a confirmação do fingerprint em cada convite atestado,
+      # e ninguém repara. Um stack de desenvolvimento define a sua no .env.
+      NIS2PME_MESTRA_PUBKEY: ${NIS2PME_MESTRA_PUBKEY:-zoz286THo5fYFur5w1gfihxSCWupsS33fdnkcCaN0wU}
       # CORS_ORIGINS not set here: auto-derived from APP_URL by the backend
     volumes:
       - nis2pme_uploads:/app/uploads

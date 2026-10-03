@@ -1,0 +1,9 @@
+{
+  "descricao": "Feriados nacionais obrigatórios (Código do Trabalho, art. 234.º). O Carnaval, os feriados municipais e as tolerâncias de ponto não entram: contam como dias úteis, o que dá o prazo mais cedo, nunca mais tarde.",
+  "fixos": ["01-01", "04-25", "05-01", "06-10", "08-15", "10-05", "11-01", "12-01", "12-08", "12-25"],
+  "pascoa": {
+    "sexta_feira_santa": -2,
+    "pascoa": 0,
+    "corpo_de_deus": 60
+  }
+}

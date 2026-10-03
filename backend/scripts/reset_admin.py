@@ -49,7 +49,8 @@ except OSError:
 os.environ.setdefault("DEPLOYMENT_MODE", "onprem")
 
 # ── Verificar variáveis obrigatórias / Check required variables ───────────────
-# Só DATABASE_URL é necessária: o reset usa Argon2 (sem Fernet) e não decifra TOTP.
+# Só DATABASE_URL é obrigatória: o reset usa Argon2 e não decifra TOTP. O registo
+# de auditoria usa as chaves do auto-secrets.env (lidas acima); sem elas avisa.
 if not os.environ.get("DATABASE_URL"):
     print("\nERRO / ERROR: DATABASE_URL não definida / is not set.")
     print("  Dentro do Docker / Inside Docker:")
@@ -58,21 +59,30 @@ if not os.environ.get("DATABASE_URL"):
 
 # ── Imports após env pronto / Imports once env is ready ───────────────────────
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+def _url_da_base() -> str:
+    # A password do .env entra crua no DATABASE_URL; com @, / ou : a URL não se
+    # lia e o script não chegava à base — precisamente quando é preciso.
+    from app.shared.url_base import codificar_password
+    return codificar_password(os.environ["DATABASE_URL"], os.environ.get("DB_PASSWORD"))
+
 try:
-    from argon2 import PasswordHasher
     from sqlalchemy.exc import OperationalError
     from sqlmodel import Session, create_engine, select
 
     from app.empresas.models import Empresa  # noqa: F401 — regista o mapper antes do Utilizador
     from app.auth.models import CodigoBackup2FA, RoleUtilizador, TokenRefresh, Utilizador
-    from app.shared.audit import AuditLog, ResultadoAcao
-    from app.shared.utils import validar_forca_password
+    from app.shared.audit import Acao, registar_acao
+    from app.shared.politica_seguranca import password_min
+    from app.shared.utils import criar_password_hasher, validar_forca_password
 except ImportError as e:
     print(f"\nERRO / ERROR: dependência ou módulo em falta / missing dependency or module: {e}")
     print("  Corre dentro do container / Run inside the container.")
     sys.exit(1)
 
-_ph = PasswordHasher()
+# Mesmos parâmetros da app: um hash gerado aqui tem de custar o mesmo que um
+# gerado no registo normal.
+_ph = criar_password_hasher()
 
 
 # ── Mensagens bilingues / Bilingual messages ──────────────────────────────────
@@ -97,10 +107,10 @@ MSGS = {
         "irreversible": "  ATENÇÃO: Esta operação é irreversível.",
         "confirm_email": "  Para confirmar, escreve o email do utilizador ({email}): ",
         "email_mismatch": "  Email não coincide. Cancelado.",
-        "pwd_rules": "  Nova password (mín. 8 caracteres: maiúscula, minúscula, dígito e especial):",
+        "pwd_rules": "  Nova password (mín. {min} caracteres, com maiúscula, dígito e carácter especial):",
         "pwd_prompt": "  Nova password: ",
         "pwd_confirm": "  Confirmar password: ",
-        "pwd_invalid": "  Password inválida. Requisitos: mín. 8 caracteres, com maiúscula, minúscula, dígito e caráter especial.",
+        "pwd_invalid": "  Password inválida: {motivo}",
         "pwd_mismatch": "  As passwords não coincidem.",
         "applying": "  A aplicar alterações...",
         "done_pwd": "  ✓ Password redefinida",
@@ -133,10 +143,10 @@ MSGS = {
         "irreversible": "  WARNING: This operation is irreversible.",
         "confirm_email": "  To confirm, type the user's email ({email}): ",
         "email_mismatch": "  Email does not match. Cancelled.",
-        "pwd_rules": "  New password (min. 8 characters: upper-case, lower-case, digit and special):",
+        "pwd_rules": "  New password (min. {min} characters, with an upper-case letter, a digit and a special character):",
         "pwd_prompt": "  New password: ",
         "pwd_confirm": "  Confirm password: ",
-        "pwd_invalid": "  Invalid password. Requirements: at least 8 characters, with upper-case, lower-case, a digit and a special character.",
+        "pwd_invalid": "  Invalid password: {motivo}",
         "pwd_mismatch": "  The passwords do not match.",
         "applying": "  Applying changes...",
         "done_pwd": "  ✓ Password reset",
@@ -195,23 +205,27 @@ def _apagar_codigos_backup(db: Session, utilizador_id: uuid.UUID) -> None:
 
 
 def _registar_auditlog(db: Session, utilizador: Utilizador, acao: str, dados: dict) -> None:
-    """Best-effort — não interrompe o reset se a tabela/coluna não existir."""
+    """Regista pela mesma porta que a aplicação: `registar_acao` guarda os dados
+    como JSON, cifra o user-agent e encadeia a linha no commit. Uma linha
+    escrita à mão ficava fora da cadeia — indistinguível de uma forjada.
+
+    Não interrompe o reset (a password já foi mudada), mas uma falha diz-se:
+    um reset sem registo tem de ser visível a quem o fez."""
     try:
-        db.add(AuditLog(
+        registar_acao(
+            db,
+            acao=acao,
             empresa_id=utilizador.empresa_id,
             utilizador_id=utilizador.id,
-            acao=acao,
             entidade_tipo="Utilizador",
             entidade_id=utilizador.id,
-            dados_anteriores=None,
-            dados_novos=str(dados),
-            ip_address="127.0.0.1 (reset-script)",
+            dados_novos=dados,
             user_agent="reset_admin.py",
-            resultado=ResultadoAcao.SUCESSO,
-        ))
+        )
         db.commit()
-    except Exception:
+    except Exception as erro:  # noqa: BLE001 — o reset já está feito; avisar e seguir
         db.rollback()
+        print(f"  AVISO / WARNING: registo de auditoria não gravado / audit record not written: {erro}")
 
 
 # ── Fluxo principal ───────────────────────────────────────────────────────────
@@ -286,12 +300,14 @@ def _fluxo(db: Session, M: dict) -> None:
     nova_hash = None
     if fazer_pwd:
         print()
-        print(M["pwd_rules"])
+        # A mesma regra da aplicação, com o mínimo da empresa desta conta.
+        minimo = password_min(db, utilizador.empresa_id)
+        print(M["pwd_rules"].format(min=minimo))
         while True:
             pw = _input_seguro(M["pwd_prompt"])
-            valida, _ = validar_forca_password(pw)
+            valida, motivo = validar_forca_password(pw, minimo=minimo)
             if not valida:
-                print(M["pwd_invalid"])
+                print(M["pwd_invalid"].format(motivo=motivo))
                 continue
             if pw != _input_seguro(M["pwd_confirm"]):
                 print(M["pwd_mismatch"])
@@ -305,14 +321,17 @@ def _fluxo(db: Session, M: dict) -> None:
     if fazer_pwd and nova_hash:
         utilizador.password_hash = nova_hash
         utilizador.password_temporaria_ativa = False
-        _apagar_refresh_tokens(db, utilizador.id)
         print(M["done_pwd"])
-        print(M["done_sessions"])
     if fazer_mfa:
         utilizador.totp_secret_cifrado = None
         utilizador.totp_ativo = False
         _apagar_codigos_backup(db, utilizador.id)
         print(M["done_2fa"])
+    # Qualquer das duas fecha as sessões abertas, como no reset feito pelo
+    # administrador na aplicação: quem tinha a password ou o autenticador antigos
+    # não fica com uma sessão viva.
+    _apagar_refresh_tokens(db, utilizador.id)
+    print(M["done_sessions"])
 
     utilizador.updated_at = datetime.now(timezone.utc)
     db.add(utilizador)
@@ -321,11 +340,11 @@ def _fluxo(db: Session, M: dict) -> None:
 
     # 6. AuditLog
     if fazer_pwd:
-        _registar_auditlog(db, utilizador, "utilizador.password_reset_manual",
+        _registar_auditlog(db, utilizador, Acao.PASSWORD_RESET_CONSOLA,
                            {"metodo": "reset_admin_script", "sessoes_revogadas": True})
     if fazer_mfa:
-        _registar_auditlog(db, utilizador, "utilizador.2fa_reset_manual",
-                           {"metodo": "reset_admin_script"})
+        _registar_auditlog(db, utilizador, Acao.FA2_RESET_CONSOLA,
+                           {"metodo": "reset_admin_script", "sessoes_revogadas": True})
 
     # 7. Sumário
     print()
@@ -350,7 +369,7 @@ def main() -> None:
     print("=" * 60)
 
     try:
-        engine = create_engine(os.environ["DATABASE_URL"], echo=False)
+        engine = create_engine(_url_da_base(), echo=False)
         with Session(engine) as db:
             _fluxo(db, M)
     except OperationalError:
