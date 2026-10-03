@@ -21,6 +21,7 @@ from app.setup.schemas import (
     SetupRespostaSchema,
     SetupStatusSchema,
 )
+from app.shared.audit import Acao, registar_acao
 from app.shared.dependencies import require_role
 from app.auth.models import RoleUtilizador, Utilizador
 
@@ -34,7 +35,7 @@ logger = logging.getLogger(__name__)
     response_model=SetupStatusSchema,
     summary="Estado de configuração da instalação",
 )
-def get_setup_status(db: Session = Depends(get_session)):
+def get_setup_status(db: Session = Depends(get_session, scope="function")):
     """
     Endpoint público — frontend chama isto na primeira visita para saber se
     deve mostrar o wizard de configuração ou o ecrã de login normal.
@@ -77,7 +78,7 @@ def get_tls_status():
 def iniciar_setup(
     request: Request,
     response: Response,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_session, scope="function"),
 ):
     """
     Chamado pelo wizard ao abrir. O primeiro cliente reclama a sessão e recebe um
@@ -115,7 +116,7 @@ def configurar_instalacao(
     dados: SetupConfigurarSchema,
     request: Request,
     response: Response,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_session, scope="function"),
 ):
     """
     Cria a primeira empresa e o primeiro utilizador admin.
@@ -154,7 +155,8 @@ def configurar_instalacao(
 )
 def configurar_https(
     dados: SetupHttpsSchema,
-    db: Session = Depends(get_session),
+    request: Request,
+    db: Session = Depends(get_session, scope="function"),
     utilizador: Utilizador = Depends(require_role(RoleUtilizador.ADMIN)),
 ):
     """
@@ -165,8 +167,12 @@ def configurar_https(
 
     Requer role admin (altera infraestrutura TLS). O sistema deve estar configurado.
     Escreve a config no volume partilhado e sinaliza o nginx para recarregar.
+
+    Continua aberta depois da instalação (o assistente chama-a já com a sessão do
+    administrador, a seguir ao setup), por isso fica na trilha: o modo, o endereço
+    público antes e depois, e os dados públicos do certificado — nunca a chave.
     """
-    from app.setup.https_service import configurar_nginx_https
+    from app.setup import https_service
 
     if settings.DEPLOYMENT_MODE != "onprem":
         from fastapi import HTTPException
@@ -175,7 +181,11 @@ def configurar_https(
             detail="Configuração HTTPS só disponível em modo on-prem.",
         )
 
-    resultado = configurar_nginx_https(
+    anterior = {
+        "app_url": get_settings().APP_URL,
+        "certificado": https_service.inspecionar_certificado_ativo(),
+    }
+    resultado = https_service.configurar_nginx_https(
         modo=dados.modo.value,
         cert_pem=dados.cert_pem,
         key_pem=dados.key_pem,
@@ -192,6 +202,17 @@ def configurar_https(
     if parsed.netloc and parsed.scheme != novo_scheme:
         atualizar_env({"APP_URL": urlunparse((novo_scheme, parsed.netloc, "", "", "", ""))})
 
+    registar_acao(
+        db, acao=Acao.SISTEMA_HTTPS_CONFIGURADO, empresa_id=utilizador.empresa_id,
+        utilizador_id=utilizador.id, dados_anteriores=anterior,
+        dados_novos={
+            "modo": dados.modo.value,
+            "app_url": get_settings().APP_URL,
+            "certificado": https_service.inspecionar_certificado_ativo(),
+        },
+        request=request,
+    )
+    db.commit()
     return SetupHttpsRespostaSchema(**resultado)
 
 
@@ -202,6 +223,8 @@ def configurar_https(
 )
 def configurar_email(
     dados: SetupEmailSchema,
+    request: Request,
+    db: Session = Depends(get_session, scope="function"),
     utilizador: Utilizador = Depends(require_role(RoleUtilizador.ADMIN)),
 ):
     """
@@ -209,8 +232,11 @@ def configurar_email(
     variáveis SMTP_*/EMAIL_* no .env e aplicando-as imediatamente.
 
     Requer role admin (controla o servidor de saída de email). Apenas em modo on-prem.
+    Fica na trilha como a gravação pelas definições: por este relé saem as
+    recuperações de password. Sem a password — só se existe uma.
     """
     from app.setup import email_service
+    from app.sistema.service import obter_config_email
 
     if settings.DEPLOYMENT_MODE != "onprem":
         from fastapi import HTTPException
@@ -219,5 +245,12 @@ def configurar_email(
             detail="Configuração de email só disponível em modo on-prem.",
         )
 
+    anterior = obter_config_email()
     resultado = email_service.configurar_email_smtp(dados)
+    registar_acao(
+        db, acao=Acao.SISTEMA_EMAIL_CONFIGURADO, empresa_id=utilizador.empresa_id,
+        utilizador_id=utilizador.id, dados_anteriores=anterior,
+        dados_novos={**obter_config_email(), "via": "assistente"}, request=request,
+    )
+    db.commit()
     return SetupEmailRespostaSchema(**resultado)

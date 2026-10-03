@@ -2,7 +2,9 @@
 # NIS2PME Frontend — Dockerfile (on-prem, produção)
 # O dist/ já está pré-compilado — apenas serve via Nginx.
 # ============================================================
-FROM nginx:stable-alpine
+# Versão fixa: `stable-alpine` mudava de nginx a cada rebuild sem ninguém
+# decidir. Subir a versão é uma alteração deliberada, aqui.
+FROM nginx:1.28-alpine
 
 # Remover configuração default do nginx
 RUN rm /etc/nginx/conf.d/default.conf

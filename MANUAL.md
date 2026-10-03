@@ -3,7 +3,7 @@
 **[English](MANUAL.md)** · [Português 🇵🇹](MANUAL.pt-PT.md)
 
 > Edition: On-Prem (GHCR images)
-> Date: 2026-06-12
+> Date: 2026-10-01
 
 ---
 
@@ -67,7 +67,7 @@ By default the script installs into a `./nis2pme` folder. To choose another:
 NIS2PME_DIR=/opt/nis2pme sh start_nis2pme.sh
 ```
 
-> **The one-liner runs without prompts.** Piped into `bash` it has no terminal, so it uses defaults: the language menu is skipped (**Portuguese**) and a **temporary self-signed certificate** is generated. To be prompted for the language and the TLS mode (see [Step 4](#step-4--connection-security-https)), download and run it instead (`sh start_nis2pme.sh`). The certificate can also be set or replaced later in the setup wizard.
+> **The one-liner runs without prompts.** Piped into `bash` it has no terminal, so it uses defaults: the language menu is skipped (**Portuguese**) and a **temporary self-signed certificate** is generated. To be prompted for the language and the TLS mode (see [Step 4](#step-4--connection-security-https)), download and run it instead (`sh start_nis2pme.sh`). The certificate can also be set or replaced during the first-run setup wizard.
 
 ### Option B — Manual Docker Compose
 
@@ -96,7 +96,7 @@ docker compose ps
 docker compose logs -f
 ```
 
-> The backend runs the database migrations at startup, so the first boot can take up to 1–2 minutes.
+> The backend runs the database migrations at startup, so the first boot can take a few minutes.
 
 ---
 
@@ -135,8 +135,8 @@ Once the system is up, open the browser at the address shown (e.g. `https://192.
 The **setup wizard** guides you through 5 steps:
 
 ### Step 1 — Company details
-- Name, sector of activity, size (micro/small/medium)
-- The system automatically determines the required compliance level (important or essential entity)
+- Name, sector of activity, size (micro/small/medium/large), NIS2 classification (important/essential) and QNRCS compliance level (Basic/Substantial/High) — you choose them
+- The wizard pre-fills the classification from the sector and the level from the classification; both can be adjusted
 
 ### Step 2 — Administrator account
 - Name, email and password of the main administrator user
@@ -207,11 +207,14 @@ SMTP_PASSWORD=email_password
 SMTP_FROM_EMAIL=noreply@company.pt
 SMTP_FROM_NAME=NIS2PME
 SMTP_TLS=true
+# SMTP_SSL=true                     # implicit TLS (port 465); mutually exclusive with SMTP_TLS
 ```
+
+> Other optional variables (email notifications, audit retention, the listen interface and the trusted proxy IP) are documented and commented in [`.env.example`](.env.example).
 
 ### Pinning an image version
 
-By default the compose file uses the `:latest` tag. To pin a specific version, edit `docker-compose.yml` and replace, for example, `ghcr.io/nis2pme/backend:latest` with `ghcr.io/nis2pme/backend:0.2`.
+By default the compose file uses the `:latest` tag. To pin a specific version, edit `docker-compose.yml` and replace, for example, `ghcr.io/nis2pme/backend:latest` with `ghcr.io/nis2pme/backend:0.4.0`. The installer also accepts `NIS2PME_VERSION=v0.4.0`, which pins the published compose file and verifies it against the published checksum.
 
 ### Docker volumes (data persistence)
 
@@ -264,30 +267,45 @@ sh start_nis2pme.sh
 
 > Database migrations are applied automatically at startup (`alembic upgrade head`).
 
-### Manual database backup
+### Built-in backups (recommended)
+
+The app ships its own backup system under **Settings → System**: set a
+passphrase (mandatory — no backups without it) and from then on a **daily
+automatic backup** is created (03:00, configurable); you can also create one
+manually at any time, in full mode or database-only. Each `.nbk` file is
+**encrypted** and, in full mode, contains everything: database, evidence,
+premium data (if any), secrets and `.env`.
+
+> **The passphrase and a copy of the backups must live OFF this server**
+> (e.g. password vault + download the `.nbk` to another machine).
+> Without the passphrase, a backup is unrecoverable.
+
+### Restoring a backup
 
 ```bash
-# Create a backup
-docker exec nis2pme_db pg_dump -U nis2pme nis2pme > backup_$(date +%Y%m%d).sql
+# 1. Inspect the contents (changes nothing; prompts for the passphrase)
+sh restaurar_backup.sh nis2pme-backup-20260715-030000.nbk
 
-# Restore (stop the system first)
-docker compose down
-docker compose up -d db
-docker exec -i nis2pme_db psql -U nis2pme nis2pme < backup_20260612.sql
-docker compose up -d
+# 2. Actually run it (safety backup, API paused, restore, automatic restart)
+sh restaurar_backup.sh nis2pme-backup-20260715-030000.nbk --confirmo
 ```
 
-### Volume backup (evidence + secrets)
+The first argument can be a backup stored on the server or a local `.nbk`
+file (e.g. downloaded from the UI). The restore is protected: authenticated
+encryption, version/migration checks (a backup from a newer app version is
+refused), automatic safety backup of the current state, maintenance mode, and
+at the end the backend restarts and applies migrations by itself. The final
+report is written to `data/restauro-relatorio.json` (inside the volume) and
+to the audit log.
 
-```bash
-# Evidence
-docker run --rm -v nis2pme_uploads:/data -v $(pwd):/backup alpine \
-    tar czf /backup/uploads_backup_$(date +%Y%m%d).tar.gz -C /data .
+Useful flags: `--sem-premium` (skip the backup's premium data),
+`--maquina-nova` (first restore on a new server — also applies the backup's
+`.env`, keeping the database passwords generated on this machine).
 
-# Secrets (critical — without this backup you cannot restore encrypted data)
-docker run --rm -v nis2pme_data:/data -v $(pwd):/backup alpine \
-    tar czf /backup/secrets_backup_$(date +%Y%m%d).tar.gz -C /data .
-```
+> On a new server: install normally with `start_nis2pme.sh` (it creates the
+> `.env`; the app generates the secrets on first boot), copy the `.nbk` into the
+> compose folder and run the restore with `--maquina-nova`.
+> If the premium licence uses anti-clone activation, reactivation may be needed.
 
 ---
 
@@ -344,7 +362,7 @@ Run it **on the machine where NIS2PME is installed** — no login is required (i
 
 - **Reset the password**, **disable 2FA (MFA)**, or **both**.
 - It **lists the administrator and sub-administrator accounts**, lets you choose which one, and asks you to **confirm by typing that user's email** before changing anything.
-- A new password must meet the platform's standard rules: **at least 8 characters**, with upper- and lower-case letters, a digit and a special character.
+- A new password must meet the platform's standard rules: **at least 12 characters**, with an upper-case letter, a digit and a special character.
 - Resetting the password automatically **revokes all active sessions**.
 
 > The `-it` flags are required (interactive prompts). After finishing, sign in with the new password and re-enable 2FA in the account settings if you disabled it.

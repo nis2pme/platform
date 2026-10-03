@@ -18,7 +18,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from sqlalchemy import Column, JSON, Text, UniqueConstraint
+from sqlalchemy import Column, DateTime, JSON, Text, UniqueConstraint
 from sqlmodel import Field, Relationship, SQLModel
 
 from app.shared.enums import EstadoControlo
@@ -420,6 +420,17 @@ class ControloEmpresaV2(SQLModel, table=True):
 
     estado: EstadoControlo = Field(default=EstadoControlo.NAO_INICIADO)
     nivel_maturidade_atual: int = Field(default=0)
+
+    # Estado "não aplicável" (scoping de exclusão): justificação obrigatória,
+    # cifrada em repouso; quem marcou e quando ficam registados — o controlo
+    # continua visível (e contestável pelo auditor), só sai das contas.
+    na_justificacao: Optional[str] = Field(default=None, sa_column=Column(Text))
+    na_definido_por: Optional[uuid.UUID] = Field(
+        default=None, foreign_key="utilizadores.id", nullable=True
+    )
+    na_definido_em: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
 
     implementador_id: Optional[uuid.UUID] = Field(
         default=None, foreign_key="utilizadores.id", nullable=True, index=True

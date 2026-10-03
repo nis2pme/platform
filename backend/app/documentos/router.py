@@ -74,7 +74,7 @@ def _resolver_caminho_seguro(item: dict, locale: str) -> Path | None:
     "",
     summary="Listar templates de documentos disponíveis",
 )
-async def listar_documentos(
+def listar_documentos(
     lang: str = Query(default="pt", max_length=10, description="Locale pretendido (pt/en)"),
     utilizador: Utilizador = Depends(get_current_user),
 ):
@@ -109,7 +109,7 @@ _DOC_ID_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789_-")
     "/{doc_id}/download",
     summary="Fazer download de um template de documento",
 )
-async def download_documento(
+def download_documento(
     doc_id: str,
     lang: str = Query(default="pt", max_length=10, description="Locale pretendido (pt/en)"),
     utilizador: Utilizador = Depends(get_current_user),

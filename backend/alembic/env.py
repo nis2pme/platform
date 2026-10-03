@@ -47,6 +47,19 @@ from app.controlos.models import (  # noqa: F401
 )
 from app.evidencias.models import Evidencia  # noqa: F401
 
+# Dossiês de auditoria + pareceres importados: relatorios_auditoria e tarefas
+# têm FK para pareceres_importados — estes modelos têm de estar no metadata
+# antes de qualquer create_all (senão a FK fica por resolver em bases frescas).
+import app.dossie.models  # noqa: F401
+
+# NÃO importar aqui os restantes módulos com tabelas (tarefas, incidentes,
+# formação, notificações, política, plano, conetores, cadeia). Numa instalação
+# nova a `001` faz `create_all` deste metadata, e as migrações que criam essas
+# tabelas (ex.: a `014`) não têm "se ainda não existir": importá-las aqui fazia
+# a `001` criá-las e a `014` rebentar com "relation already exists" — o gate
+# `test_schema_equivalencia_postgres` apanhou-o. O `autogenerate` fica sem as
+# ver; as migrações escrevem-se à mão e o gate guarda a equivalência.
+
 # Novos modelos de frameworks (nova estrutura)
 from app.frameworks.models import (  # noqa: F401
     Framework,
@@ -77,7 +90,12 @@ if not _database_url:
     raise RuntimeError(
         "DATABASE_URL não definida. Verifica o ficheiro backend/.env"
     )
-config.set_main_option("sqlalchemy.url", _database_url)
+from app.shared.url_base import codificar_password  # noqa: E402
+
+_database_url = codificar_password(_database_url, os.environ.get("DB_PASSWORD"))
+# O ficheiro de configuração do alembic interpola `%`: uma password codificada
+# (`%40`) tem de chegar lá com o `%` escapado.
+config.set_main_option("sqlalchemy.url", _database_url.replace("%", "%%"))
 
 # Logging
 if config.config_file_name is not None:

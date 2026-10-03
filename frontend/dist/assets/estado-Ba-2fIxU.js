@@ -1,0 +1,1 @@
+import{i as r}from"./vue-vendor-we9dzQ92.js";const s=Symbol("fontes-dados");function t(){const o=r(s,null);if(!o)throw new Error("usarFontes fora do ecrã Fontes de dados");return o}export{s as C,t as u};

@@ -1,0 +1,8 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+filterwarnings = [
+    # slowapi usa asyncio.iscoroutinefunction, deprecado no Python 3.14.
+    # Aguardar fix do upstream: https://github.com/laurentS/slowapi
+    "ignore:.*asyncio.iscoroutinefunction.*:DeprecationWarning:slowapi",
+]

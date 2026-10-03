@@ -5,14 +5,16 @@ from __future__ import annotations
 import math
 import uuid
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from statistics import StatisticsError, mode
 
 from fastapi import HTTPException, Request, status
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlmodel import Session, select
 
 from app.auth.models import RoleUtilizador, Utilizador
+from app.controlos import historico
 from app.controlos.models import (
     DecisaoAuditor,
     HistoricoMaturidade,
@@ -53,8 +55,10 @@ from app.frameworks.runtime import (
     load_thresholds_map,
     resolver_framework_empresa,
 )
+from app.notificacoes.catalogo import Codigo
 from app.notificacoes.service import criar_notificacao
 from app.shared.audit import Acao, ResultadoAcao, registar_acao
+from app.shared.capacidades import ClasseAcao, exigir_ambito, so_atribuidos, tem_capacidade
 from app.shared.enums import EstadoControlo as EstadoControloSchema
 from app.shared.pii import cifrar_pii, decifrar_pii
 from app.shared.scoring import (
@@ -62,6 +66,7 @@ from app.shared.scoring import (
     calcular_score_dominio,
     calcular_score_global,
 )
+from app.shared.trancas import trancar_par
 from app.shared.utils import resolver_locale
 
 
@@ -98,6 +103,16 @@ def _get_user_display_name(
         return None
 
     return decifrar_pii(utilizador.nome)
+
+
+def _score_dominio_do_perfil(domain_rows, rows_obrigatorios_ids: set) -> int:
+    """Score (nível) do domínio calculado só sobre os controlos que o perfil da
+    empresa exige — a mesma base da percentagem de conformidade. Antes entrava
+    o mínimo de TODOS os controlos: uma empresa Básico a 100 % via o radar a 0
+    por causa de um controlo que nem lhe era pedido."""
+    return calcular_score_dominio(
+        [row.ce for row in domain_rows if row.control.id in rows_obrigatorios_ids]
+    )
 
 
 def _get_nivel_minimo(
@@ -354,7 +369,10 @@ def _get_rows_obrigatorios_perfil(
     return [
         row
         for row in rows
-        if _is_obrigatorio_perfil(
+        # "Não aplicável" sai do denominador de TODAS as contas de perfil
+        # (percentagens, conformes, pendências, cap-99, resumo, críticos).
+        if row.ce.estado != EstadoControloV2.NAO_APLICAVEL
+        and _is_obrigatorio_perfil(
             empresa,
             framework,
             row.control.id,
@@ -497,27 +515,42 @@ def _get_ce_or_404(
 
 
 def _validar_acesso_leitura(ce: ControloEmpresaV2, utilizador: Utilizador) -> None:
-    if utilizador.role == RoleUtilizador.IMPLEMENTADOR and ce.implementador_id != utilizador.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Sem acesso a este controlo.",
-        )
+    """Quem alcança ESTE controlo. Quem tem a ação de todo decide-se no router."""
+    exigir_ambito(utilizador, "controlos", ClasseAcao.VER, ce.implementador_id)
 
 
 def _validar_acesso_escrita(ce: ControloEmpresaV2, utilizador: Utilizador) -> None:
-    _validar_acesso_leitura(ce, utilizador)
+    exigir_ambito(utilizador, "controlos", ClasseAcao.OPERAR, ce.implementador_id)
 
-    if utilizador.role == RoleUtilizador.CEO:
+    # Um controlo fora do âmbito não aceita trabalho (checks, estados, níveis)
+    # enquanto a aplicabilidade não for reposta — evita estados incoerentes.
+    if ce.estado == EstadoControloV2.NAO_APLICAVEL:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Perfil CEO não pode alterar controlos.",
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Controlo marcado como não aplicável — reponha a aplicabilidade primeiro.",
         )
 
-    if utilizador.role == RoleUtilizador.AUDITOR:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Use os endpoints /aprovar ou /reprovar para aprovação.",
-        )
+
+def filtro_de_visibilidade(utilizador: Utilizador) -> uuid.UUID | None:
+    """Regra de visibilidade das listagens de controlos, num só sítio.
+
+    Quem lê os controlos só no âmbito «atribuído» (o implementador, de origem)
+    vê apenas aqueles de que é implementador: devolve-se o id dele, para
+    filtrar. Os restantes papéis veem todos: devolve-se None (sem filtro).
+    """
+    return utilizador.id if so_atribuidos(utilizador, "controlos", ClasseAcao.VER) else None
+
+
+def ve_controlo(utilizador: Utilizador, ce: ControloEmpresaV2) -> bool:
+    """Se o utilizador vê ESTE controlo no módulo de controlos.
+
+    A mesma regra da listagem, mais o portão do próprio módulo: sem a leitura
+    de controlos não se vê nenhum, por muito que outro módulo o cite.
+    """
+    if not tem_capacidade(utilizador, "controlos", ClasseAcao.VER):
+        return False
+    filtro = filtro_de_visibilidade(utilizador)
+    return filtro is None or ce.implementador_id == filtro
 
 
 def _build_controlo_lista_schema(
@@ -531,6 +564,7 @@ def _build_controlo_lista_schema(
     control_locales: dict[uuid.UUID, ControlLocale],
     domain_locales: dict[uuid.UUID, DomainLocale],
     utilizadores_map: dict[uuid.UUID, Utilizador],
+    subdomain_locales: dict[uuid.UUID, SubdomainLocale] | None = None,
 ) -> ControloListaSchema:
     nivel_minimo = _get_nivel_minimo(thresholds_map, row.control.id, framework, primeiro_nivel_map)
     obrigatorio_perfil = _is_obrigatorio_perfil(
@@ -562,11 +596,19 @@ def _build_controlo_lista_schema(
             if row.domain.id in domain_locales
             else row.domain.code
         ),
+        subdomain_id=row.subdomain.id,
+        subdomain_codigo=row.subdomain.code,
+        subdomain_nome=(
+            (subdomain_locales or {}).get(row.subdomain.id).name
+            if (subdomain_locales or {}).get(row.subdomain.id)
+            else row.subdomain.code
+        ),
         ordem=row.control.order,
         controlo_empresa_id=row.ce.id,
         estado=_estado_schema(row.ce.estado),
         nivel_maturidade_atual=row.ce.nivel_maturidade_atual,
         nivel_minimo=nivel_minimo,
+        nivel_inicial=primeiro_nivel_map.get(row.control.id),
         em_conformidade=row.ce.nivel_maturidade_atual >= nivel_minimo,
         score_conformidade=_score_conformidade_continuo(
             row.ce.nivel_maturidade_atual, nivel_minimo
@@ -601,7 +643,9 @@ def _filtrar_rows_visiveis_dashboard(
     rows: list[ControlHierarchyRow],
     utilizador: Utilizador | None,
 ) -> list[ControlHierarchyRow]:
-    if utilizador is None or utilizador.role != RoleUtilizador.IMPLEMENTADOR:
+    if utilizador is None or not so_atribuidos(
+        utilizador, "controlos", ClasseAcao.VER
+    ):
         return rows
 
     return [
@@ -613,6 +657,7 @@ def _filtrar_rows_visiveis_dashboard(
 
 def _construir_resumo_controlos(
     rows: list[ControlHierarchyRow],
+    nao_aplicaveis: int = 0,
 ) -> ResumoControlosSchema:
     resumo = {
         "total": len(rows),
@@ -620,6 +665,9 @@ def _construir_resumo_controlos(
         "em_progresso": 0,
         "implementados": 0,
         "aprovados": 0,
+        # Contados à parte (estão fora dos obrigatórios): a exclusão de âmbito
+        # fica sempre visível — nunca desaparece em silêncio das contas.
+        "nao_aplicaveis": nao_aplicaveis,
     }
 
     for row in rows:
@@ -653,8 +701,7 @@ def _guardar_snapshot(db: Session, empresa: Empresa, framework: Framework) -> No
 
     for domain_id, domain_rows in grouped.items():
         domain = domain_rows[0].domain
-        ces_dom = [row.ce for row in domain_rows]
-        scores_dominio[domain.code] = calcular_score_dominio(ces_dom)
+        scores_dominio[domain.code] = _score_dominio_do_perfil(domain_rows, rows_obrigatorios_ids)
 
         domain_rows_obrigatorios = [
             row
@@ -831,17 +878,18 @@ def _notificar_implementador(
     db: Session,
     empresa_id: uuid.UUID,
     utilizador_id: uuid.UUID,
-    titulo: str,
-    mensagem: str,
+    codigo: str,
+    controlo: str,
+    auditor: str,
     controlo_empresa_id: uuid.UUID,
 ) -> None:
     criar_notificacao(
         db,
         empresa_id=empresa_id,
         utilizador_id=utilizador_id,
-        tipo="controlo_decisao_auditoria",
-        titulo=titulo,
-        mensagem=mensagem,
+        codigo=codigo,
+        params={"controlo": controlo, "auditor": auditor},
+        entidade_id=controlo_empresa_id,
         controlo_empresa_id=controlo_empresa_id,
     )
 
@@ -851,29 +899,41 @@ def inicializar_controlos_empresa_v2(
     empresa_id: uuid.UUID,
     framework_id: uuid.UUID,
 ) -> int:
-    control_ids = db.exec(
-        select(Control.id)
-        .join(Subdomain, Control.subdomain_id == Subdomain.id)
-        .join(Domain, Subdomain.domain_id == Domain.id)
-        .where(Domain.framework_id == framework_id)
-    ).all()
+    # Corre em cada leitura (é o que garante que um controlo novo do catálogo
+    # aparece a todas as empresas), por isso tem de ser barato: uma só consulta
+    # que devolve apenas os controlos que a empresa ainda não tem — quase
+    # sempre nenhum.
+    from sqlalchemy import and_
 
+    def _em_falta():
+        return db.exec(
+            select(Control.id)
+            .join(Subdomain, Control.subdomain_id == Subdomain.id)
+            .join(Domain, Subdomain.domain_id == Domain.id)
+            .outerjoin(
+                ControloEmpresaV2,
+                and_(
+                    ControloEmpresaV2.control_id == Control.id,
+                    ControloEmpresaV2.empresa_id == empresa_id,
+                    ControloEmpresaV2.framework_id == framework_id,
+                ),
+            )
+            .where(Domain.framework_id == framework_id, ControloEmpresaV2.id.is_(None))
+        ).all()
+
+    control_ids = _em_falta()
     if not control_ids:
         return 0
-
-    existentes = set(
-        db.exec(
-            select(ControloEmpresaV2.control_id).where(
-                ControloEmpresaV2.empresa_id == empresa_id,
-                ControloEmpresaV2.framework_id == framework_id,
-            )
-        ).all()
-    )
+    # Há controlos por criar (um controlo novo no catálogo): o painel pede
+    # várias leituras em paralelo e cada uma inseria a sua cópia. Só aqui se
+    # pede a tranca, e volta-se a ler com ela.
+    if trancar_par(db, empresa_id, framework_id):
+        control_ids = _em_falta()
+        if not control_ids:
+            return 0
 
     criados = 0
     for control_id in control_ids:
-        if control_id in existentes:
-            continue
         db.add(
             ControloEmpresaV2(
                 empresa_id=empresa_id,
@@ -906,6 +966,9 @@ def listar_dominios(
 
     rows = load_company_control_rows(db, empresa_id, framework.id)
     grouped = _rows_por_dominio(rows)
+    rows_obrigatorios_ids = obter_ids_controlos_obrigatorios_perfil_v2(
+        db, rows, empresa, framework, load_thresholds_map(db, framework, empresa)
+    )
     domain_locales = load_preferred_locales(
         db,
         DomainLocale,
@@ -928,7 +991,7 @@ def listar_dominios(
                     domain_locale.description if domain_locale else ""
                 ),
                 ordem=domain.order,
-                score=calcular_score_dominio([row.ce for row in domain_rows]),
+                score=_score_dominio_do_perfil(domain_rows, rows_obrigatorios_ids),
             )
         )
 
@@ -945,9 +1008,7 @@ def listar_controlos(
     framework = _ensure_empresa_framework(db, empresa)
     locale = locale or resolver_locale(empresa, framework)
 
-    implementador_id = (
-        utilizador.id if utilizador.role == RoleUtilizador.IMPLEMENTADOR else None
-    )
+    implementador_id = filtro_de_visibilidade(utilizador)
     rows = load_company_control_rows(
         db,
         empresa.id,
@@ -987,6 +1048,14 @@ def listar_controlos(
         locale,
         framework.default_locale,
     )
+    subdomain_locales = load_preferred_locales(
+        db,
+        SubdomainLocale,
+        "subdomain_id",
+        {row.subdomain.id for row in rows},
+        locale,
+        framework.default_locale,
+    )
     utilizadores_map = _load_user_map(
         db,
         {
@@ -1008,9 +1077,107 @@ def listar_controlos(
             control_locales,
             domain_locales,
             utilizadores_map,
+            subdomain_locales,
         )
         for row in rows
     ]
+
+
+@dataclass(frozen=True)
+class ControloCitado:
+    """Um controlo do quadro da empresa, tal como outro módulo o cita.
+
+    O código e o título são de todos. O estado, a maturidade e a pertença ao
+    perfil só vêm preenchidos para quem vê o controlo no módulo de controlos;
+    para os restantes ficam a None logo aqui, para que nenhum chamador os
+    mostre por engano.
+    """
+
+    control_id: uuid.UUID
+    controlo_empresa_id: uuid.UUID
+    codigo: str
+    titulo: str
+    visivel: bool
+    estado: str | None
+    nivel_maturidade: int | None
+    obrigatorio_perfil: bool | None
+
+
+def controlos_citados(
+    db: Session,
+    empresa: Empresa,
+    utilizador: Utilizador,
+    *,
+    codigos: set[str] | None = None,
+    ids: set[uuid.UUID] | None = None,
+    locale: str | None = None,
+) -> list[ControloCitado]:
+    """Os controlos do quadro da empresa pedidos por código ou por id.
+
+    Os ids aceitam os dois que existem: o do quadro (o que a listagem devolve e
+    o ecrã guarda) e o da empresa (dados antigos). Um código ou um id que não
+    seja do quadro da empresa não aparece no resultado. A visibilidade é a da
+    listagem de controlos (`ve_controlo`).
+    """
+    codigos = set(codigos or ())
+    ids = set(ids or ())
+    if not codigos and not ids:
+        return []
+
+    framework = _ensure_empresa_framework(db, empresa)
+    locale = locale or resolver_locale(empresa, framework)
+
+    condicoes = []
+    if codigos:
+        condicoes.append(Control.code.in_(list(codigos)))
+    if ids:
+        condicoes.append(Control.id.in_(list(ids)))
+        condicoes.append(ControloEmpresaV2.id.in_(list(ids)))
+    resultados = db.exec(
+        _build_control_row_stmt(empresa.id, framework.id).where(or_(*condicoes))
+    ).all()
+    if not resultados:
+        return []
+
+    control_ids = {control.id for _ce, control, _sub, _dom in resultados}
+    thresholds_map = load_thresholds_map(db, framework, empresa)
+    primeiro_nivel_map = _load_primeiro_nivel_controlo(db, control_ids)
+    control_locales = load_preferred_locales(
+        db,
+        ControlLocale,
+        "control_id",
+        control_ids,
+        locale,
+        framework.default_locale,
+    )
+
+    citados: list[ControloCitado] = []
+    for ce, control, _sub, _dom in resultados:
+        visivel = ve_controlo(utilizador, ce)
+        control_locale = control_locales.get(control.id)
+        citados.append(
+            ControloCitado(
+                control_id=control.id,
+                controlo_empresa_id=ce.id,
+                codigo=control.code,
+                titulo=control_locale.title if control_locale else control.code,
+                visivel=visivel,
+                estado=ce.estado.value if visivel and ce.estado else None,
+                nivel_maturidade=ce.nivel_maturidade_atual if visivel else None,
+                obrigatorio_perfil=(
+                    _is_obrigatorio_perfil(
+                        empresa,
+                        framework,
+                        control.id,
+                        thresholds_map,
+                        primeiro_nivel_map.get(control.id),
+                    )
+                    if visivel
+                    else None
+                ),
+            )
+        )
+    return citados
 
 
 def get_controlo_lista_item(
@@ -1023,9 +1190,7 @@ def get_controlo_lista_item(
     framework = _ensure_empresa_framework(db, empresa)
     locale = locale or resolver_locale(empresa, framework)
 
-    implementador_id = (
-        utilizador.id if utilizador.role == RoleUtilizador.IMPLEMENTADOR else None
-    )
+    implementador_id = filtro_de_visibilidade(utilizador)
     row = _load_control_row(
         db,
         empresa.id,
@@ -1067,6 +1232,14 @@ def get_controlo_lista_item(
         locale,
         framework.default_locale,
     )
+    subdomain_locales = load_preferred_locales(
+        db,
+        SubdomainLocale,
+        "subdomain_id",
+        {row.subdomain.id},
+        locale,
+        framework.default_locale,
+    )
     utilizadores_map = _load_user_map(
         db,
         {row.ce.implementador_id} if row.ce.implementador_id else set(),
@@ -1083,6 +1256,7 @@ def get_controlo_lista_item(
         control_locales,
         domain_locales,
         utilizadores_map,
+        subdomain_locales,
     )
 
 
@@ -1096,9 +1270,7 @@ def get_controlo_detalhe(
     framework = _ensure_empresa_framework(db, empresa)
     locale = locale or resolver_locale(empresa, framework)
 
-    implementador_id = (
-        utilizador.id if utilizador.role == RoleUtilizador.IMPLEMENTADOR else None
-    )
+    implementador_id = filtro_de_visibilidade(utilizador)
     row = _load_control_row(
         db,
         empresa.id,
@@ -1222,6 +1394,8 @@ def get_controlo_detalhe(
         utilizador_ids.add(row.ce.implementador_id)
     if row.ce.aprovado_por_id:
         utilizador_ids.add(row.ce.aprovado_por_id)
+    if row.ce.na_definido_por:
+        utilizador_ids.add(row.ce.na_definido_por)
     utilizadores_map = _load_user_map(db, utilizador_ids)
 
     checks_por_nivel: dict[int, list[ControloNivelCheckSchema]] = defaultdict(list)
@@ -1325,6 +1499,14 @@ def get_controlo_detalhe(
             row.ce.aprovado_por_id,
         ),
         data_aprovacao=row.ce.data_aprovacao,
+        na_justificacao=(
+            decifrar_pii(row.ce.na_justificacao) if row.ce.na_justificacao else None
+        ),
+        na_definido_em=row.ce.na_definido_em,
+        na_definido_por_nome=_get_user_display_name(
+            utilizadores_map,
+            row.ce.na_definido_por,
+        ),
         ultimo_relatorio_auditoria=ultimo_relatorio_schema,
         checks_por_nivel=dict(checks_por_nivel),
     )
@@ -1350,12 +1532,20 @@ def concluir_check(
         )
 
     control = db.get(Control, ce.control_id)
-    check_empresa = db.exec(
-        select(ControloEmpresaCheckV2).where(
-            ControloEmpresaCheckV2.controlo_empresa_id == ce.id,
-            ControloEmpresaCheckV2.sub_requirement_id == sub_requirement.id,
-        )
-    ).first()
+
+    def _check_atual():
+        return db.exec(
+            select(ControloEmpresaCheckV2).where(
+                ControloEmpresaCheckV2.controlo_empresa_id == ce.id,
+                ControloEmpresaCheckV2.sub_requirement_id == sub_requirement.id,
+            )
+        ).first()
+
+    check_empresa = _check_atual()
+    if check_empresa is None and trancar_par(db, ce.id, sub_requirement.id):
+        # Dois pedidos em paralelo (duplo clique) liam os dois que o check não
+        # existia e criavam dois: com a tranca, o segundo já vê o do primeiro.
+        check_empresa = _check_atual()
 
     if check_empresa and check_empresa.concluido:
         return ce.nivel_maturidade_atual
@@ -1373,6 +1563,10 @@ def concluir_check(
     db.add(check_empresa)
 
     if ce.estado == EstadoControloV2.NAO_INICIADO:
+        historico.registar_transicao(
+            db, controlo_empresa=ce, estado_novo=EstadoControloV2.EM_PROGRESSO,
+            empresa=empresa, utilizador_id=utilizador.id,
+        )
         ce.estado = EstadoControloV2.EM_PROGRESSO
         ce.updated_at = datetime.now(timezone.utc)
         db.add(ce)
@@ -1424,6 +1618,23 @@ def reverter_check(
 
     control = db.get(Control, ce.control_id)
     novo_nivel = _recalcular_nivel(db, ce, control, empresa, framework)
+
+    # Reverter um check de um controlo APROVADO desfaz o que foi aprovado: o
+    # controlo volta a "em progresso" e a aprovação sai, com a transição na
+    # história. Antes baixava o nível e deixava o estado — um controlo aprovado
+    # abaixo do que foi validado, sem ninguém ser avisado.
+    estado_reposto = None
+    if ce.estado == EstadoControloV2.APROVADO:
+        historico.registar_transicao(
+            db, controlo_empresa=ce, estado_novo=EstadoControloV2.EM_PROGRESSO,
+            empresa=empresa, utilizador_id=utilizador.id,
+        )
+        _limpar_aprovacao_ao_sair(ce, EstadoControloV2.EM_PROGRESSO)
+        ce.estado = EstadoControloV2.EM_PROGRESSO
+        ce.updated_at = datetime.now(timezone.utc)
+        db.add(ce)
+        estado_reposto = EstadoControloV2.EM_PROGRESSO.value
+
     registar_acao(
         db,
         acao=Acao.CONTROLO_CHECK_REVERTIDO,
@@ -1436,6 +1647,7 @@ def reverter_check(
             "check_id": str(check_id),
             "controlo_codigo": control.code if control else None,
             "novo_nivel": novo_nivel,
+            **({"estado": estado_reposto, "aprovacao_removida": True} if estado_reposto else {}),
         },
         request=request,
     )
@@ -1453,12 +1665,21 @@ def alterar_estado(
     ce = _get_ce_or_404(db, controlo_empresa_id, empresa.id)
     _validar_acesso_escrita(ce, utilizador)
 
+    # Que ESTADOS o implementador pode atribuir — não é alcance (a matriz já disse
+    # que alcança este controlo), é o limite do fluxo: executa e declara feito, a
+    # validação é de outrem.
     if utilizador.role == RoleUtilizador.IMPLEMENTADOR:
         permitidos = {
             EstadoControloV2.EM_PROGRESSO,
             EstadoControloV2.IMPLEMENTADO,
         }
         if EstadoControloV2(novo_estado.value) not in permitidos:
+            from app.shared.audit import registar_negacao
+
+            registar_negacao(
+                utilizador, modulo="controlos", acao="operar",
+                codigo="estado_reservado", request=request,
+            )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=(
@@ -1469,6 +1690,11 @@ def alterar_estado(
 
     control = db.get(Control, ce.control_id)
     estado_anterior = ce.estado.value
+    historico.registar_transicao(
+        db, controlo_empresa=ce, estado_novo=EstadoControloV2(novo_estado.value),
+        empresa=empresa, utilizador_id=utilizador.id,
+    )
+    aprovacao_removida = _limpar_aprovacao_ao_sair(ce, EstadoControloV2(novo_estado.value))
     ce.estado = EstadoControloV2(novo_estado.value)
     ce.updated_at = datetime.now(timezone.utc)
     db.add(ce)
@@ -1485,6 +1711,145 @@ def alterar_estado(
         dados_novos={
             "estado": novo_estado.value,
             "controlo_codigo": control.code if control else None,
+            **({"aprovacao_removida": True} if aprovacao_removida else {}),
+        },
+        request=request,
+    )
+    return ce
+
+
+def _limpar_aprovacao_ao_sair(ce: ControloEmpresaV2, estado_novo: EstadoControloV2) -> bool:
+    """Sair de APROVADO para qualquer outro estado apaga a aprovação.
+
+    Caso contrário o controlo ficava "em progresso" com `aprovado_por` e
+    `data_aprovacao` preenchidos, e o detalhe e os relatórios continuavam a
+    dizer "aprovado por X em D" sobre um controlo que já não o está. Devolve
+    True se havia uma aprovação e foi removida.
+    """
+    if ce.estado != EstadoControloV2.APROVADO or estado_novo == EstadoControloV2.APROVADO:
+        return False
+    ce.aprovado_por_id = None
+    ce.data_aprovacao = None
+    return True
+
+
+def nivel_minimo_do_controlo(db: Session, ce: ControloEmpresaV2, empresa: Empresa) -> int:
+    """O nível de maturidade que o perfil da empresa exige a este controlo."""
+    framework = _ensure_empresa_framework(db, empresa)
+    thresholds_map = load_thresholds_map(db, framework, empresa)
+    return _get_nivel_minimo(thresholds_map, ce.control_id, framework)
+
+
+JUSTIFICACAO_NA_MIN = 10
+
+
+def marcar_nao_aplicavel(
+    db: Session,
+    controlo_empresa_id: uuid.UUID,
+    empresa: Empresa,
+    utilizador: Utilizador,
+    justificacao: str,
+    request: Request | None = None,
+) -> ControloEmpresaV2:
+    """Exclui um controlo do âmbito (scoping): sai de todas as contas de
+    conformidade, mas continua visível — e a justificação fica registada e
+    contestável por um auditor. Justificação obrigatória."""
+    justificacao = (justificacao or "").strip()
+    if len(justificacao) < JUSTIFICACAO_NA_MIN:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "A justificação é obrigatória (mínimo "
+                f"{JUSTIFICACAO_NA_MIN} caracteres)."
+            ),
+        )
+
+    ce = _get_ce_or_404(db, controlo_empresa_id, empresa.id)
+    exigir_ambito(utilizador, "controlos", ClasseAcao.GOVERNAR, ce.implementador_id)
+    if ce.estado == EstadoControloV2.NAO_APLICAVEL:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="O controlo já está marcado como não aplicável.",
+        )
+
+    control = db.get(Control, ce.control_id)
+    estado_anterior = ce.estado.value
+    historico.registar_transicao(
+        db, controlo_empresa=ce, estado_novo=EstadoControloV2.NAO_APLICAVEL,
+        empresa=empresa, utilizador_id=utilizador.id,
+    )
+    _limpar_aprovacao_ao_sair(ce, EstadoControloV2.NAO_APLICAVEL)
+    ce.estado = EstadoControloV2.NAO_APLICAVEL
+    # Justificação cifrada em repouso (pode conter contexto sensível da
+    # organização); decifra-se para o detalhe, relatórios e dossiê.
+    ce.na_justificacao = cifrar_pii(justificacao)
+    ce.na_definido_por = utilizador.id
+    ce.na_definido_em = datetime.now(timezone.utc)
+    ce.updated_at = datetime.now(timezone.utc)
+    db.add(ce)
+
+    registar_acao(
+        db,
+        acao=Acao.CONTROLO_NAO_APLICAVEL,
+        resultado=ResultadoAcao.SUCESSO,
+        empresa_id=empresa.id,
+        utilizador_id=utilizador.id,
+        entidade_tipo="ControloEmpresaV2",
+        entidade_id=ce.id,
+        dados_anteriores={"estado": estado_anterior},
+        dados_novos={
+            "estado": EstadoControloV2.NAO_APLICAVEL.value,
+            "controlo_codigo": control.code if control else None,
+            # Cifrada na tabela do controlo: a trilha (e o arquivo, para sempre)
+            # não guarda uma cópia em claro. Mesma regra do texto dos incidentes.
+            "justificacao": "***",
+        },
+        request=request,
+    )
+    return ce
+
+
+def reaplicar_controlo(
+    db: Session,
+    controlo_empresa_id: uuid.UUID,
+    empresa: Empresa,
+    utilizador: Utilizador,
+    request: Request | None = None,
+) -> ControloEmpresaV2:
+    """Repõe a aplicabilidade de um controlo "não aplicável" — volta a
+    'não iniciado' e reentra em todas as contas."""
+    ce = _get_ce_or_404(db, controlo_empresa_id, empresa.id)
+    exigir_ambito(utilizador, "controlos", ClasseAcao.GOVERNAR, ce.implementador_id)
+    if ce.estado != EstadoControloV2.NAO_APLICAVEL:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="O controlo não está marcado como não aplicável.",
+        )
+
+    control = db.get(Control, ce.control_id)
+    historico.registar_transicao(
+        db, controlo_empresa=ce, estado_novo=EstadoControloV2.NAO_INICIADO,
+        empresa=empresa, utilizador_id=utilizador.id,
+    )
+    ce.estado = EstadoControloV2.NAO_INICIADO
+    ce.na_justificacao = None
+    ce.na_definido_por = None
+    ce.na_definido_em = None
+    ce.updated_at = datetime.now(timezone.utc)
+    db.add(ce)
+
+    registar_acao(
+        db,
+        acao=Acao.CONTROLO_REAPLICADO,
+        resultado=ResultadoAcao.SUCESSO,
+        empresa_id=empresa.id,
+        utilizador_id=utilizador.id,
+        entidade_tipo="ControloEmpresaV2",
+        entidade_id=ce.id,
+        dados_anteriores={"estado": EstadoControloV2.NAO_APLICAVEL.value},
+        dados_novos={
+            "estado": EstadoControloV2.NAO_INICIADO.value,
+            "controlo_codigo": control.code if control else None,
         },
         request=request,
     )
@@ -1499,13 +1864,8 @@ def aprovar_controlo(
     texto_relatorio: str,
     request: Request | None = None,
 ) -> ControloEmpresaV2:
-    if utilizador.role != RoleUtilizador.AUDITOR:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Apenas auditores podem aprovar controlos.",
-        )
-
     ce = _get_ce_or_404(db, controlo_empresa_id, empresa.id)
+    exigir_ambito(utilizador, "controlos", ClasseAcao.APROVAR, ce.implementador_id)
     if ce.estado != EstadoControloV2.IMPLEMENTADO:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1513,6 +1873,14 @@ def aprovar_controlo(
         )
 
     control = db.get(Control, ce.control_id)
+    # Aprovar abaixo do nível que o perfil exige é permitido (o auditor decide),
+    # mas fica registado com os dois níveis — antes passava em silêncio.
+    nivel_minimo = nivel_minimo_do_controlo(db, ce, empresa)
+    abaixo_do_minimo = ce.nivel_maturidade_atual < nivel_minimo
+    historico.registar_transicao(
+        db, controlo_empresa=ce, estado_novo=EstadoControloV2.APROVADO,
+        empresa=empresa, utilizador_id=utilizador.id,
+    )
     ce.estado = EstadoControloV2.APROVADO
     ce.aprovado_por_id = utilizador.id
     ce.data_aprovacao = datetime.now(timezone.utc)
@@ -1537,7 +1905,18 @@ def aprovar_controlo(
         utilizador_id=utilizador.id,
         entidade_tipo="ControloEmpresaV2",
         entidade_id=ce.id,
-        dados_novos={"controlo_codigo": control.code if control else None},
+        dados_novos={
+            "controlo_codigo": control.code if control else None,
+            **(
+                {
+                    "abaixo_do_minimo": True,
+                    "nivel_atual": ce.nivel_maturidade_atual,
+                    "nivel_minimo": nivel_minimo,
+                }
+                if abaixo_do_minimo
+                else {}
+            ),
+        },
         request=request,
     )
 
@@ -1546,10 +1925,9 @@ def aprovar_controlo(
             db=db,
             empresa_id=empresa.id,
             utilizador_id=ce.implementador_id,
-            titulo="Controlo aprovado",
-            mensagem=(
-                f"O controlo {control.code} foi aprovado pelo auditor {decifrar_pii(utilizador.nome)}."
-            ),
+            codigo=Codigo.CONTROLO_APROVADO,
+            controlo=control.code if control else "",
+            auditor=decifrar_pii(utilizador.nome) or "",
             controlo_empresa_id=ce.id,
         )
 
@@ -1565,13 +1943,8 @@ def reprovar_controlo(
     nota: str | None = None,
     request: Request | None = None,
 ) -> ControloEmpresaV2:
-    if utilizador.role != RoleUtilizador.AUDITOR:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Apenas auditores podem reprovar controlos.",
-        )
-
     ce = _get_ce_or_404(db, controlo_empresa_id, empresa.id)
+    exigir_ambito(utilizador, "controlos", ClasseAcao.APROVAR, ce.implementador_id)
     if ce.estado not in (
         EstadoControloV2.IMPLEMENTADO,
         EstadoControloV2.APROVADO,
@@ -1582,6 +1955,10 @@ def reprovar_controlo(
         )
 
     control = db.get(Control, ce.control_id)
+    historico.registar_transicao(
+        db, controlo_empresa=ce, estado_novo=EstadoControloV2.NAO_APROVADO,
+        empresa=empresa, utilizador_id=utilizador.id,
+    )
     ce.estado = EstadoControloV2.NAO_APROVADO
     ce.aprovado_por_id = None
     ce.data_aprovacao = None
@@ -1618,10 +1995,9 @@ def reprovar_controlo(
             db=db,
             empresa_id=empresa.id,
             utilizador_id=ce.implementador_id,
-            titulo="Controlo não aprovado",
-            mensagem=(
-                f"O controlo {control.code} foi reprovado pelo auditor {decifrar_pii(utilizador.nome)}."
-            ),
+            codigo=Codigo.CONTROLO_NAO_APROVADO,
+            controlo=control.code if control else "",
+            auditor=decifrar_pii(utilizador.nome) or "",
             controlo_empresa_id=ce.id,
         )
 
@@ -1672,21 +2048,22 @@ def delegar_controlo(
     utilizador: Utilizador,
     request: Request | None = None,
 ) -> ControloEmpresaV2:
-    if utilizador.role not in (RoleUtilizador.ADMIN, RoleUtilizador.SUBADMIN):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Apenas administradores podem delegar controlos.",
-        )
-
     ce = _get_ce_or_404(db, controlo_empresa_id, empresa.id)
+    exigir_ambito(utilizador, "controlos", ClasseAcao.DELEGAR, ce.implementador_id)
     control = db.get(Control, ce.control_id)
     impl_anterior = str(ce.implementador_id) if ce.implementador_id else None
 
-    impl_nome = None
     impl_email = None
     if implementador_id is not None:
         implementador = db.get(Utilizador, implementador_id)
-        if not implementador or implementador.empresa_id != empresa.id:
+        # Uma conta desativada ou removida já não entra na aplicação: o controlo
+        # ficava atribuído a quem não o pode tratar.
+        if (
+            not implementador
+            or implementador.empresa_id != empresa.id
+            or not implementador.ativo
+            or implementador.deleted_at is not None
+        ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Implementador não encontrado nesta empresa.",
@@ -1698,7 +2075,6 @@ def delegar_controlo(
                     "O utilizador selecionado não tem o perfil de implementador."
                 ),
             )
-        impl_nome = implementador.nome
         impl_email = implementador.email
 
     ce.implementador_id = implementador_id
@@ -1738,11 +2114,10 @@ def delegar_controlos_lote(
     utilizador: Utilizador,
     request: Request | None = None,
 ) -> int:
-    if utilizador.role not in (RoleUtilizador.ADMIN, RoleUtilizador.SUBADMIN):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Apenas administradores podem delegar controlos.",
-        )
+    # Operação em lote: não há um registo único a que prender o âmbito, por isso
+    # exige-se alcance total. Quem só alcança o que lhe está atribuído delega um
+    # a um, pelo endpoint individual.
+    exigir_ambito(utilizador, "controlos", ClasseAcao.DELEGAR, None)
 
     adicionar_unicos = list(dict.fromkeys(adicionar_ids))
     adicionar_set = set(adicionar_unicos)
@@ -1776,6 +2151,59 @@ def delegar_controlos_lote(
         alterados += 1
 
     return alterados
+
+
+def _score_e_percentagem_globais(
+    db: Session,
+    empresa: Empresa,
+    framework,
+    rows,
+    thresholds_map: dict,
+    rows_obrigatorios_ids: set,
+) -> tuple[int, float]:
+    """Score global e percentagem de conformidade: a fórmula única, usada pelo
+    dashboard e pelo resumo. O score é o mínimo entre a média dos domínios (só
+    sobre os controlos exigidos pelo perfil) e o nível dos controlos críticos; a
+    percentagem fica nos 99 enquanto houver um exigido por implementar/aprovar."""
+    scores_dominio = {
+        domain_rows[0].domain.code: _score_dominio_do_perfil(domain_rows, rows_obrigatorios_ids)
+        for domain_rows in _rows_por_dominio(rows).values()
+    }
+    controlos_criticos = [row.ce for row in rows if row.control.criticality == "critical"]
+    percentagem_global, _, _ = calcular_conformidade_global_v2(
+        db,
+        rows,
+        empresa,
+        framework,
+        thresholds_map,
+    )
+    # Cap 99%: math says 100% mas mínimos não estão todos implementado/aprovado
+    if percentagem_global == 100 and any(
+        row.ce.estado not in (EstadoControloV2.IMPLEMENTADO, EstadoControloV2.APROVADO)
+        for row in rows
+        if row.control.id in rows_obrigatorios_ids
+    ):
+        percentagem_global = 99
+    return calcular_score_global(scores_dominio, controlos_criticos), percentagem_global
+
+
+def calcular_resumo_conformidade(db: Session, empresa: Empresa) -> tuple[int, float]:
+    """Só o score global e a percentagem, sem o detalhe do dashboard (textos,
+    subrequisitos, checks, histórico). Para listas de muitas empresas: o
+    dashboard completo custa perto de 100 ms por empresa."""
+    framework = _ensure_empresa_framework(db, empresa)
+    rows = load_company_control_rows(db, empresa.id, framework.id)
+    thresholds_map = load_thresholds_map(db, framework, empresa)
+    rows_obrigatorios_ids = obter_ids_controlos_obrigatorios_perfil_v2(
+        db,
+        rows,
+        empresa,
+        framework,
+        thresholds_map,
+    )
+    return _score_e_percentagem_globais(
+        db, empresa, framework, rows, thresholds_map, rows_obrigatorios_ids
+    )
 
 
 def calcular_dashboard(
@@ -1840,14 +2268,19 @@ def calcular_dashboard(
     )
 
     dominios_schema: list[ScoreDominioSchema] = []
-    scores_dominio: dict[str, int] = {}
-    controlos_criticos: list[ControloEmpresaV2] = []
     criticos_em_falta: list[ControloListaSchema] = []
     # Resumo conta apenas os controlos obrigatórios para o perfil da empresa
     rows_visiveis_obrigatorios = [
         row for row in rows_visiveis if row.control.id in rows_obrigatorios_ids
     ]
-    resumo_controlos = _construir_resumo_controlos(rows_visiveis_obrigatorios)
+    resumo_controlos = _construir_resumo_controlos(
+        rows_visiveis_obrigatorios,
+        nao_aplicaveis=sum(
+            1
+            for row in rows_visiveis
+            if row.ce.estado == EstadoControloV2.NAO_APLICAVEL
+        ),
+    )
 
     for domain_rows in grouped.values():
         domain = domain_rows[0].domain
@@ -1882,8 +2315,7 @@ def calcular_dashboard(
                 percentagem_dom = 99
         else:
             percentagem_dom = 0
-        score = calcular_score_dominio([row.ce for row in domain_rows])
-        scores_dominio[domain.code] = score
+        score = _score_dominio_do_perfil(domain_rows, rows_obrigatorios_ids)
 
         dominios_schema.append(
             ScoreDominioSchema(
@@ -1900,8 +2332,6 @@ def calcular_dashboard(
         for row in domain_rows:
             if row.control.criticality != "critical":
                 continue
-
-            controlos_criticos.append(row.ce)
 
             if row.control.id not in rows_obrigatorios_ids:
                 continue
@@ -1951,21 +2381,9 @@ def calcular_dashboard(
                 )
             )
 
-    percentagem_global, _, _ = calcular_conformidade_global_v2(
-        db,
-        rows,
-        empresa,
-        framework,
-        thresholds_map,
+    score_global, percentagem_global = _score_e_percentagem_globais(
+        db, empresa, framework, rows, thresholds_map, rows_obrigatorios_ids
     )
-    # Cap 99%: math says 100% mas mínimos não estão todos implementado/aprovado
-    rows_obrigatorios_global = [row for row in rows if row.control.id in rows_obrigatorios_ids]
-    if percentagem_global == 100 and any(
-        row.ce.estado not in (EstadoControloV2.IMPLEMENTADO, EstadoControloV2.APROVADO)
-        for row in rows_obrigatorios_global
-    ):
-        percentagem_global = 99
-    score_global = calcular_score_global(scores_dominio, controlos_criticos)
 
     nivel_minimo_global = calcular_nivel_minimo_global(
         thresholds_map,
@@ -1974,7 +2392,7 @@ def calcular_dashboard(
 
     return DashboardScoreSchema(
         empresa_id=empresa.id,
-        empresa_nome=decifrar_pii(empresa.nome),
+        empresa_nome=decifrar_pii(empresa.nome) or "",
         empresa_created_at=empresa.created_at,
         score_global=score_global,
         percentagem_conformidade=percentagem_global,
@@ -2009,6 +2427,7 @@ __all__ = [
     "calcular_conformidade_global_v2",
     "calcular_dashboard",
     "calcular_nivel_minimo_global",
+    "calcular_resumo_conformidade",
     "concluir_check",
     "delegar_controlo",
     "get_controlo_detalhe",

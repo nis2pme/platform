@@ -8,7 +8,6 @@ from datetime import datetime
 from pydantic import BaseModel, EmailStr, field_validator, model_validator
 
 from app.auth.models import RoleUtilizador
-from app.shared.utils import validar_forca_password
 
 
 # ---------------------------------------------------------------------------
@@ -38,15 +37,21 @@ class UtilizadorSchema(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def decifrar_pii(cls, data):
-        """Decifra campos PII cifrados em repouso antes da validação."""
+        """Decifra campos PII cifrados em repouso antes da validação.
+
+        Copia os atributos para um dict em vez de mutar a entidade ORM recebida:
+        mutar o objeto persistente faria o commit automático do get_session regravar
+        o nome DECIFRADO (em claro) na base — corrompia a cifra em repouso e partia o
+        login seguinte (texto simples não decifra → InvalidToken → 500).
+        """
         from app.shared.pii import decifrar_pii
-        if hasattr(data, "nome"):
-            # Objeto SQLModel — converte para dict mutável
-            nome = getattr(data, "nome", None)
-            if nome is not None:
-                object.__setattr__(data, "nome", decifrar_pii(nome))
-        elif isinstance(data, dict) and "nome" in data:
-            data["nome"] = decifrar_pii(data["nome"])
+        if not isinstance(data, dict):
+            data = {k: getattr(data, k) for k in cls.model_fields if hasattr(data, k)}
+        if data.get("nome") is not None:
+            # Um nome que não decifra (chave trocada, linha gravada em claro)
+            # sai vazio em vez de partir a listagem inteira com um 500: a
+            # decifra já registou o erro, e o ecrã continua a funcionar.
+            data["nome"] = decifrar_pii(data["nome"]) or ""
         return data
 
 
@@ -84,17 +89,6 @@ class CriarUtilizadorSchema(BaseModel):
         v = v.strip()
         if len(v) < 2:
             raise ValueError("Nome deve ter pelo menos 2 caracteres.")
-        return v
-
-    @field_validator("password")
-    @classmethod
-    def validar_password(cls, v: str) -> str:
-        if len(v) < 10:
-            raise ValueError("A password deve ter pelo menos 10 caracteres.")
-        if not any(c.isdigit() for c in v):
-            raise ValueError("A password deve conter pelo menos um número.")
-        if not any(c.isupper() for c in v):
-            raise ValueError("A password deve conter pelo menos uma maiúscula.")
         return v
 
     @field_validator("role")
@@ -171,14 +165,6 @@ class AlterarPasswordSchema(BaseModel):
     nova_password: str
     confirmar_nova_password: str
 
-    @field_validator("nova_password")
-    @classmethod
-    def validar_nova_password(cls, v: str) -> str:
-        valida, mensagem = validar_forca_password(v)
-        if not valida:
-            raise ValueError(mensagem)
-        return v
-
     @field_validator("confirmar_nova_password")
     @classmethod
     def validar_confirmacao(cls, v: str, info) -> str:
@@ -214,8 +200,42 @@ class ResultadoResetMFAAdminSchema(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Lista de implementadores (para delegação de controlos)
+# Listas para seletores (delegação de controlos, responsáveis, participantes)
 # ---------------------------------------------------------------------------
+
+
+class MembroEquipaSchema(BaseModel):
+    """
+    Pessoa da empresa para os seletores dos módulos (responsável, participantes).
+
+    Ao contrário do `ImplementadorSchema`, cobre TODOS os papéis: um módulo como a
+    Formação tem de poder escolher o órgão de gestão, que nunca é implementador.
+    Leva só o mínimo para preencher um seletor — sem email nem estado da conta.
+    """
+
+    id: uuid.UUID
+    nome: str
+    role: RoleUtilizador
+
+    model_config = {"from_attributes": True}
+
+    @model_validator(mode="before")
+    @classmethod
+    def decifrar_pii(cls, data):
+        """
+        Decifra o nome antes da validação, copiando os atributos para um dict em vez
+        de mutar a entidade ORM: mutar o objeto persistente faria o commit automático
+        do get_session regravar o nome em claro na base.
+        """
+        from app.shared.pii import decifrar_pii
+        if not isinstance(data, dict):
+            data = {k: getattr(data, k) for k in cls.model_fields if hasattr(data, k)}
+        if data.get("nome") is not None:
+            # Um nome que não decifra (chave trocada, linha gravada em claro)
+            # sai vazio em vez de partir a listagem inteira com um 500: a
+            # decifra já registou o erro, e o ecrã continua a funcionar.
+            data["nome"] = decifrar_pii(data["nome"]) or ""
+        return data
 
 
 class ImplementadorSchema(BaseModel):
@@ -231,12 +251,19 @@ class ImplementadorSchema(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def decifrar_pii(cls, data):
-        """Decifra campos PII cifrados em repouso antes da validação."""
+        """Decifra campos PII cifrados em repouso antes da validação.
+
+        Copia os atributos para um dict em vez de mutar a entidade ORM recebida:
+        mutar o objeto persistente faria o commit automático do get_session regravar
+        o nome DECIFRADO (em claro) na base — corrompia a cifra em repouso e partia o
+        login seguinte (texto simples não decifra → InvalidToken → 500).
+        """
         from app.shared.pii import decifrar_pii
-        if hasattr(data, "nome"):
-            nome = getattr(data, "nome", None)
-            if nome is not None:
-                object.__setattr__(data, "nome", decifrar_pii(nome))
-        elif isinstance(data, dict) and "nome" in data:
-            data["nome"] = decifrar_pii(data["nome"])
+        if not isinstance(data, dict):
+            data = {k: getattr(data, k) for k in cls.model_fields if hasattr(data, k)}
+        if data.get("nome") is not None:
+            # Um nome que não decifra (chave trocada, linha gravada em claro)
+            # sai vazio em vez de partir a listagem inteira com um 500: a
+            # decifra já registou o erro, e o ecrã continua a funcionar.
+            data["nome"] = decifrar_pii(data["nome"]) or ""
         return data

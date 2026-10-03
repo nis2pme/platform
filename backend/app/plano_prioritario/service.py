@@ -5,13 +5,14 @@ Fluxo:
 1. O utilizador responde a 10 perguntas de diagnóstico rápido.
 2. As respostas são convertidas em scores (A=1…E=5, NS=1 pior cenário).
 3. Cada pergunta mapeia a controlos QNRCS específicos.
-4. O algoritmo gera o roadmap ordenado com 5 regras de priorização:
+4. O algoritmo gera o roadmap ordenado com 7 regras de priorização:
    R1 — Todos os controlos Básico antes de Substancial antes de Elevado
-   R2 — Dentro de cada tier, os mapeados pelo questionário primeiro,
-       ordenados por gap descendente (gap = alvo_do_nivel − nivel_atual)
-   R3 — Desempate 1: ordem cronológica do domínio (GR→ID→PR→DE→RS→RC)
-   R4 — Desempate 2: ID numérico do controlo
-   R5 — Controlos não-mapeados no final do tier, ordenados por R3+R4
+   R2 — Dentro de cada tier, os mapeados pelo questionário primeiro
+   R3 — Entre mapeados, a pior resposta primeiro
+   R4 — Gap descendente (gap = alvo_do_nivel − nivel_atual), para todos
+   R5 — Ordem do domínio, como o referencial a declara
+   R6 — Ordem do subdomínio, como o referencial a declara
+   R7 — Número do controlo
 """
 from __future__ import annotations
 
@@ -19,12 +20,14 @@ import re
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import and_, func
+from sqlalchemy import and_, case, func, or_
 from fastapi import HTTPException, status
 from sqlmodel import Session, select
 
 from app.empresas.models import Empresa
-from app.auth.models import RoleUtilizador, Utilizador
+from app.auth.models import Utilizador
+from app.shared.capacidades import ClasseAcao, so_atribuidos
+from app.shared.enums import EstadoControlo
 from app.frameworks.models import (
     Control,
     ControlLocale,
@@ -86,16 +89,6 @@ QUESTION_CONTROL_MAP: dict[str, list[str]] = {
     # Q10: Comunicações e acesso remoto
     "q10": ["PR.GA-7"]
     }
-
-# Ordem cronológica dos domínios para desempate (R3)
-DOMAIN_ORDER: dict[str, int] = {
-    "GR": 1,
-    "ID": 2,
-    "PR": 3,
-    "DE": 4,
-    "RS": 5,
-    "RC": 6,
-}
 
 # ---------------------------------------------------------------------------
 # Validações
@@ -265,13 +258,10 @@ def gerar_plano(
 ) -> list[PlanoItem]:
     """
     Gera (ou regenera) o plano de ações prioritárias para a empresa.
-    Aplica o algoritmo de 5 regras de priorização:
-      R1: Agrupar por nível de conformidade (Básico→Substancial→Elevado)
-        R2: Dentro do grupo, mapeados pelo questionário primeiro;
-            entre mapeados, respostas piores primeiro e gap DESC
-      R3: Desempate por ordem do domínio
-      R4: Desempate por ID numérico do controlo
-      R5: Não-mapeados no fim do tier, ordenados por R3+R4
+
+    As regras de priorização estão junto à ordenação, mais abaixo — escritas uma
+    só vez, porque uma cópia num sítio e outra noutro divergem à primeira
+    alteração e deixa de se saber qual delas descreve o código.
     """
     if not empresa.framework_id:
         raise HTTPException(
@@ -287,6 +277,9 @@ def gerar_plano(
         )
 
     rows = load_company_control_rows(db, empresa.id, framework.id)
+    # Controlos excluídos do âmbito não entram no plano de ação.
+    from app.shared.scoring import controlo_aplicavel
+    rows = [row for row in rows if controlo_aplicavel(row.ce)]
     primeiro_nivel_map = _load_primeiro_nivel_controlo(
         db,
         {row.control.id for row in rows},
@@ -324,7 +317,11 @@ def gerar_plano(
             "mapeado": row.control.code in questionnaire_scores,
             "score_questionario": questionnaire_scores.get(row.control.code),
             "dominio_codigo": row.domain.code,
-            "dominio_ordem": DOMAIN_ORDER.get(row.domain.code, 99),
+            # A ordem vem do referencial, que a declara ao importar o catálogo.
+            # Uma lista de domínios escrita aqui seria uma segunda versão da
+            # mesma verdade, e divergiria do referencial à primeira revisão dele.
+            "dominio_ordem": row.domain.order,
+            "subdominio_ordem": row.subdomain.order,
             "controlo_num": _extrair_numero_controlo(row.control.code),
             "nivel_atual": row.ce.nivel_maturidade_atual,
         })
@@ -332,24 +329,30 @@ def gerar_plano(
     # -----------------------------------------------------------------------
     # Algoritmo de ordenação
     # -----------------------------------------------------------------------
-    # Cada item recebe uma sort key tuplo:
-    # (nivel_conformidade, not mapeado, mapped_score, mapped_gap,
-    #  dominio_ordem, controlo_num)
-    #
     # R1: nivel_conformidade ASC → Básico(1) antes de Substancial(2) antes de Elevado(3)
-    # R2+R5: not mapeado → False(0) antes de True(1) → mapeados primeiro
-    #         score_questionario ASC só nos mapeados: A/NS(1) antes de B(2), etc.
-    #         gap DESC apenas dentro dos mapeados; não-mapeados empatam aqui
-    # R3: dominio_ordem ASC
-    # R4: controlo_num ASC
+    # R2: not mapeado → False(0) antes de True(1) → mapeados primeiro
+    # R3: score_questionario ASC só nos mapeados: A/NS(1) antes de B(2), etc.
+    # R4: gap DESC — quem está mais longe do alvo primeiro. Vale para todos e não
+    #     só para os mapeados: entre dois controlos que o questionário não
+    #     distingue, o que exige mais trabalho é o que exige mais antecedência.
+    #
+    # Esgotado o que distingue os controlos entre si, a fila segue a sequência do
+    # próprio referencial — domínio, subdomínio, número —, que é como ele está
+    # escrito. Quem o conhece reconhece a lista.
+    # R5: dominio_ordem ASC
+    # R6: subdominio_ordem ASC — sem ela os controlos saíam intercalados entre
+    #     subdomínios, porque o número final do código não diz a que família o
+    #     controlo pertence: GR.FR-1 vinha à frente de GR.CO-6 por ser "1".
+    # R7: controlo_num ASC
 
     items_raw.sort(key=lambda x: (
         x["nivel_conformidade"],   # R1
-        not x["mapeado"],          # R2/R5: 0=mapeado (primeiro), 1=não-mapeado (depois)
-        x["score_questionario"] if x["mapeado"] else 99,  # R2: pior resposta primeiro
-        -x["gap"] if x["mapeado"] else 0,  # R2: gap descendente só nos mapeados
-        x["dominio_ordem"],        # R3: ordem domínio
-        x["controlo_num"],         # R4: ID numérico controlo
+        not x["mapeado"],          # R2: 0=mapeado (primeiro), 1=não-mapeado (depois)
+        x["score_questionario"] if x["mapeado"] else 99,  # R3: pior resposta primeiro
+        -x["gap"],                 # R4: mais longe do alvo primeiro
+        x["dominio_ordem"],        # R5: ordem do domínio no referencial
+        x["subdominio_ordem"],     # R6: ordem do subdomínio no referencial
+        x["controlo_num"],         # R7: número do controlo
     ))
 
     # Apagar plano anterior desta empresa
@@ -358,6 +361,13 @@ def gerar_plano(
     ).all()
     for item in itens_antigos:
         db.delete(item)
+
+    # O flush aqui não é opcional. Dentro do mesmo flush o SQLAlchemy agrupa por
+    # tipo de operação e emite os INSERT antes dos DELETE, independentemente da
+    # ordem por que foram pedidos. Como (empresa_id, control_id) é único, as
+    # linhas novas colidiriam com as antigas e a regeneração falharia — sempre
+    # que já existisse plano, ou seja, em todas as vezes menos a primeira.
+    db.flush()
 
     # Criar novos PlanoItems
     novos: list[PlanoItem] = []
@@ -396,6 +406,10 @@ def obter_plano(
     """
     Devolve apenas os primeiros controlos não conformes necessários ao dashboard.
     Retorna dict compatível com PlanoOut.
+
+    O que conta como pendente decide-se aqui e em mais lado nenhum: quem consome
+    esta lista desenha-a como ela vem. Duas definições de "feito" — uma no
+    servidor, outra em cada ecrã — divergem, e a lista encolhe sem explicação.
     """
     if not empresa.framework_id:
         raise HTTPException(
@@ -425,6 +439,7 @@ def obter_plano(
     ce_framework_id = getattr(ControloEmpresaV2, "framework_id")
     ce_control_id = getattr(ControloEmpresaV2, "control_id")
     ce_nivel_atual = getattr(ControloEmpresaV2, "nivel_maturidade_atual")
+    ce_estado = getattr(ControloEmpresaV2, "estado")
     control_id_column = getattr(Control, "id")
     control_subdomain_id = getattr(Control, "subdomain_id")
     subdomain_id_column = getattr(Subdomain, "id")
@@ -432,16 +447,38 @@ def obter_plano(
     domain_id_column = getattr(Domain, "id")
     domain_framework_id = getattr(Domain, "framework_id")
 
+    # O que conta como pendente, escrito uma só vez.
+    filtros = [
+        plano_empresa_id == empresa.id,
+        # Pendente = ainda não chegou ao nível exigido. O controlo devolvido pelo
+        # aprovador volta à lista mesmo com o nível já cumprido: o trabalho foi
+        # recusado e há quem esteja à espera dele.
+        or_(
+            ce_nivel_atual < plano_nivel_conformidade,
+            ce_estado == EstadoControlo.NAO_APROVADO,
+        ),
+        # Excluído do âmbito sai da lista mesmo quando o plano é anterior à
+        # exclusão — marcar um controlo como não aplicável não regenera o plano.
+        ce_estado != EstadoControlo.NAO_APLICAVEL,
+    ]
+
+    # Mesmo critério de alcance dos controlos: quem só alcança o que lhe está
+    # atribuído vê no plano apenas os controlos que lhe foram delegados.
+    if utilizador is not None and so_atribuidos(
+        utilizador, "controlos", ClasseAcao.VER
+    ):
+        ce_implementador_id = getattr(ControloEmpresaV2, "implementador_id")
+        filtros.append(ce_implementador_id == utilizador.id)
+
+    juncao_controlo = and_(
+        ce_empresa_id == empresa.id,
+        ce_framework_id == framework.id,
+        ce_control_id == plano_control_id,
+    )
+
     stmt = (
         select(PlanoItem, ControloEmpresaV2, Control, Domain)
-        .join(
-            ControloEmpresaV2,
-            and_(
-                ce_empresa_id == empresa.id,
-                ce_framework_id == framework.id,
-                ce_control_id == plano_control_id,
-            ),
-        )
+        .join(ControloEmpresaV2, juncao_controlo)
         .join(Control, control_id_column == plano_control_id)
         .join(Subdomain, subdomain_id_column == control_subdomain_id)
         .join(
@@ -451,21 +488,24 @@ def obter_plano(
                 domain_framework_id == framework.id,
             ),
         )
-        .where(plano_empresa_id == empresa.id)
-        .where(ce_nivel_atual < plano_nivel_conformidade)
+        .where(*filtros)
     )
-
-    # Isolamento por implementador: só mostrar controlos delegados a este utilizador
-    if utilizador is not None and utilizador.role == RoleUtilizador.IMPLEMENTADOR:
-        ce_implementador_id = getattr(ControloEmpresaV2, "implementador_id")
-        stmt = stmt.where(ce_implementador_id == utilizador.id)
 
     # Itens pendentes por ordem de prioridade. O limite é só uma salvaguarda de
     # performance: o dashboard usa apenas os primeiros `limite` do tier mais baixo,
     # que estão sempre no início desta lista — logo o cap não altera o resultado.
     # (O framework QNRCS tem 107 controlos.)
+    #
+    # O tier vem à frente de tudo: um controlo devolvido pelo aprovador sobe ao
+    # topo do SEU tier, nunca à frente de um tier mais baixo. A ordem em camadas
+    # é o próprio critério do plano — não se abre exceção a ela por retrabalho.
+    retrabalho_primeiro = case(
+        (ce_estado == EstadoControlo.NAO_APROVADO, 0), else_=1
+    )
     todos_pendentes = db.exec(
-        stmt.order_by(plano_posicao).limit(50)
+        stmt.order_by(
+            plano_nivel_conformidade, retrabalho_primeiro, plano_posicao
+        ).limit(50)
     ).all()
 
     # Filtrar apenas o tier mínimo com itens pendentes.
@@ -496,9 +536,14 @@ def obter_plano(
         framework.default_locale,
     )
 
-    # Enriquecer apenas os itens mínimos usados no dashboard
+    # Enriquecer apenas os itens mínimos usados no dashboard.
+    #
+    # A ordem numerada é a desta lista, não a posição do controlo na fila
+    # completa: como só se mostram os pendentes, as posições da fila saem com
+    # buracos (1, 2, 4) e leem-se como um erro. Quem consome isto está a
+    # perguntar "o que faço a seguir", e a resposta é primeiro, segundo, terceiro.
     itens_out: list[dict] = []
-    for item, controlo_empresa, control, domain in resultados:
+    for ordem, (item, controlo_empresa, control, domain) in enumerate(resultados, 1):
         loc_ctrl = control_locales.get(control.id)
         loc_dom = domain_locales.get(domain.id)
         estado = (
@@ -508,7 +553,7 @@ def obter_plano(
         )
 
         itens_out.append({
-            "posicao": item.posicao,
+            "ordem": ordem,
             "control_id": item.control_id,
             "codigo": control.code,
             "titulo": loc_ctrl.title if loc_ctrl else control.code,
@@ -517,6 +562,11 @@ def obter_plano(
             "dominio_nome": loc_dom.name if loc_dom else domain.code,
             "mapeado_questionario": item.mapeado_questionario,
             "estado": estado,
+            # O nível é a medida objetiva do que está feito; o estado é o que
+            # alguém declarou. Ambos vão para o cliente porque é a divergência
+            # entre eles que explica um controlo declarado feito continuar aqui.
+            "nivel_atual": controlo_empresa.nivel_maturidade_atual,
+            "nivel_alvo": item.nivel_conformidade,
         })
 
     return {

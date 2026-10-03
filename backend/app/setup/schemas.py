@@ -3,9 +3,9 @@ Schemas do módulo de setup inicial (on-prem).
 """
 from typing import Optional
 
-from pydantic import BaseModel, EmailStr, field_validator, model_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
-from app.shared.utils import validar_forca_password
+from app.shared.utils import normalizar_host_rede
 
 
 class SetupStatusSchema(BaseModel):
@@ -45,14 +45,6 @@ class SetupConfigurarSchema(BaseModel):
 
     # Preferência de verificação de atualizações (default ligado)
     verificar_atualizacoes: bool = True
-
-    @field_validator("admin_password")
-    @classmethod
-    def validar_password(cls, v: str) -> str:
-        valida, mensagem = validar_forca_password(v)
-        if not valida:
-            raise ValueError(mensagem)
-        return v
 
     @field_validator("aceitou_termos", "aceitou_rgpd")
     @classmethod
@@ -105,12 +97,15 @@ class SetupEmailSchema(BaseModel):
 
     usar_smtp: bool
     smtp_host: Optional[str] = None
-    smtp_port: int = 587
+    # Fora do intervalo dos portos TCP não há ligação possível: recusar aqui poupa
+    # ao administrador um erro de envio que só apareceria muito mais tarde.
+    smtp_port: int = Field(default=587, ge=1, le=65535)
     smtp_user: Optional[str] = None
     smtp_password: Optional[str] = None
     smtp_from_email: Optional[EmailStr] = None
     smtp_from_name: str = "NIS2PME"
-    smtp_tls: bool = True
+    smtp_tls: bool = True     # STARTTLS (porta 587)
+    smtp_ssl: bool = False    # TLS implícito (porta 465)
 
     @field_validator("smtp_host", "smtp_user", "smtp_password", "smtp_from_name")
     @classmethod
@@ -130,6 +125,12 @@ class SetupEmailSchema(BaseModel):
                 raise ValueError("smtp_host é obrigatório quando usar_smtp=true.")
             if not self.smtp_from_email:
                 raise ValueError("smtp_from_email é obrigatório quando usar_smtp=true.")
+            if self.smtp_tls and self.smtp_ssl:
+                raise ValueError(
+                    "smtp_tls (STARTTLS) e smtp_ssl (TLS implícito) excluem-se: "
+                    "escolha uma das formas de cifrar a ligação."
+                )
+            self.smtp_host = normalizar_host_rede(self.smtp_host)
         return self
 
 

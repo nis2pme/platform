@@ -83,6 +83,19 @@ def calcular_nivel_controlo(
 
 
 # ---------------------------------------------------------------------------
+# Aplicabilidade (scoping de exclusão)
+# ---------------------------------------------------------------------------
+
+def controlo_aplicavel(ce: object) -> bool:
+    """Um controlo marcado "não aplicável" sai de TODAS as contas — scores,
+    percentagens, pendências e críticos. A exclusão vive aqui (e nos pontos de
+    agregação que não passam por estes helpers) para o mesmo controlo nunca
+    contar num sítio e faltar noutro."""
+    estado = getattr(ce, "estado", None)
+    return getattr(estado, "value", estado) != "nao_aplicavel"
+
+
+# ---------------------------------------------------------------------------
 # Score de um domínio
 # ---------------------------------------------------------------------------
 
@@ -91,15 +104,16 @@ def calcular_score_dominio(controlos_empresa: list) -> int:
     Score do domínio = nível do controlo mais baixo dentro desse domínio.
 
     Um domínio não pode ser considerado seguro se qualquer controlo estiver a falhar.
-    Devolve 0 se não houver controlos.
+    Controlos "não aplicáveis" não contam. Devolve 0 se não houver controlos.
 
     Args:
         controlos_empresa: lista de objectos ControloEmpresa com atributo
                            `nivel_maturidade_atual` (int).
     """
-    if not controlos_empresa:
+    aplicaveis = [ce for ce in controlos_empresa if controlo_aplicavel(ce)]
+    if not aplicaveis:
         return 0
-    return min(ce.nivel_maturidade_atual for ce in controlos_empresa)
+    return min(ce.nivel_maturidade_atual for ce in aplicaveis)
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +145,11 @@ def calcular_score_global(
 
     media = sum(scores_dominio.values()) / len(scores_dominio)
     nivel_criticos = min(
-        (c.nivel_maturidade_atual for c in controlos_criticos),
+        (
+            c.nivel_maturidade_atual
+            for c in controlos_criticos
+            if controlo_aplicavel(c)
+        ),
         default=5,
     )
     return min(int(media), nivel_criticos)

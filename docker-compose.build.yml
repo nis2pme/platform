@@ -48,13 +48,14 @@ services:
     image: ghcr.io/nis2pme/backend:latest
     container_name: nis2pme_backend
     restart: unless-stopped
+    # O entrypoint arranca como root APENAS para reparar a posse dos volumes e do .env
+    # do host (ficheiros com dono root — de versões antigas, backups ou intervenções
+    # manuais — deixavam a app em crash-loop após upgrade) e baixa de imediato para o
+    # uid 10001 via setpriv: o uvicorn nunca corre como root.
+    # CHOWN + DAC_OVERRIDE: reparação de posse; SETUID + SETGID: baixar privilégios.
     security_opt: ["no-new-privileges:true"]
     cap_drop: [ALL]
-    # DAC_OVERRIDE: o .env do host é montado abaixo para o wizard poder gravar config
-    # SMTP; o dono/permissões desse ficheiro no host raramente coincidem com o uid
-    # 10001 do container (ex.: criado por root com chmod 600) — sem esta cap, a app
-    # fica sem conseguir ler nem escrever /app/.env ("Permission denied").
-    cap_add: [DAC_OVERRIDE]
+    cap_add: [CHOWN, SETUID, SETGID, DAC_OVERRIDE]
     mem_limit: ${BACKEND_MEM_LIMIT:-1g}
     cpus: ${BACKEND_CPUS:-1.0}
     pids_limit: 512
@@ -101,9 +102,12 @@ services:
     image: ghcr.io/nis2pme/frontend:latest
     container_name: nis2pme_frontend
     restart: unless-stopped
+    # DAC_OVERRIDE: o volume nginx_config partilhado com o backend é escrito pelo
+    # backend como uid 10001 (certificados 600) — sem esta cap, o root daqui não
+    # consegue lê-los. (Mesmas caps do docker-compose.yml de produção.)
     security_opt: ["no-new-privileges:true"]
     cap_drop: [ALL]
-    cap_add: [CHOWN, SETUID, SETGID, NET_BIND_SERVICE]
+    cap_add: [CHOWN, SETUID, SETGID, NET_BIND_SERVICE, DAC_OVERRIDE]
     mem_limit: ${FRONTEND_MEM_LIMIT:-128m}
     cpus: ${FRONTEND_CPUS:-0.5}
     pids_limit: 256

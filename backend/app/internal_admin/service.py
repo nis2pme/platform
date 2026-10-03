@@ -38,6 +38,12 @@ def definir_suspensao(
 
     empresa.suspenso = suspenso
     db.add(empresa)
+    sessoes_revogadas = 0
+    if suspenso:
+        # Suspender é cortar o acesso, não só impedir logins novos.
+        from app.auth.service import revogar_sessoes_da_empresa
+
+        sessoes_revogadas = revogar_sessoes_da_empresa(db, empresa.id)
     registar_acao(
         db,
         acao=Acao.EMPRESA_SUSPENSA if suspenso else Acao.EMPRESA_REATIVADA,
@@ -45,7 +51,11 @@ def definir_suspensao(
         entidade_tipo="Empresa",
         entidade_id=empresa.id,
         dados_anteriores={"suspenso": anterior},
-        dados_novos={"suspenso": suspenso, "actor": actor},
+        dados_novos={
+            "suspenso": suspenso,
+            "actor": actor,
+            "sessoes_revogadas": sessoes_revogadas,
+        },
         request=request,
     )
     db.commit()

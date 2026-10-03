@@ -193,12 +193,22 @@ def reset_estado_controlos(db: Session, framework: Framework, codes) -> int:
     control_ids = [c.id for c in ctrls.values()]
     if not control_ids:
         return 0
+    from app.controlos import historico
+    from app.controlos.models import OrigemTransicao
+
     total = 0
     for ce in db.exec(
         select(ControloEmpresaV2).where(
             ControloEmpresaV2.control_id.in_(control_ids)
         )
     ).all():
+        # A reposição fica na história do controlo, com a origem "sistema":
+        # sem isto, "como estava em DATA" deixava de bater com a realidade
+        # depois de uma atualização regulamentar.
+        historico.registar_transicao(
+            db, controlo_empresa=ce, estado_novo=EstadoControlo.NAO_INICIADO,
+            origem=OrigemTransicao.SISTEMA,
+        )
         ce.estado = EstadoControlo.NAO_INICIADO
         ce.nivel_maturidade_atual = 0
         ce.aprovado_por_id = None

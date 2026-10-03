@@ -6,8 +6,8 @@
       "en": "Cybersecurity Policy"
     },
     "descricao": {
-      "pt": "Modelo de política de cibersegurança adaptado às obrigações NIS2/DL 125/2025.",
-      "en": "Cybersecurity policy template aligned with NIS2/DL 125/2025 obligations."
+      "pt": "Modelo de política de cibersegurança adaptado às obrigações NIS2.",
+      "en": "Cybersecurity policy template aligned with NIS2 obligations."
     },
     "ficheiros": {
       "pt": "pt/politica_ciberseguranca_pme.docx",
@@ -17,12 +17,12 @@
       {
     "id": "politica_controlo_acessos",
     "titulo": {
-      "pt": "Política de Controlo de Acessos",
-      "en": "Access Control Policy"
+      "pt": "Política de Gestão de Identidades, Autenticação e Controlo de Acessos",
+      "en": "Identity, Authentication and Access Control Policy"
     },
     "descricao": {
-      "pt": "Modelo de política de controlo de acessos adaptado às obrigações NIS2/DL 125/2025.",
-      "en": "Access control policy template aligned with NIS2/DL 125/2025 obligations."
+      "pt": "Modelo de política de gestão de identidades, autenticação e controlo de acessos, alinhado com o QNRCS (PR.GA-1, PR.GA-3, PR.GA-5, PR.GA-7) e as obrigações NIS2.",
+      "en": "Identity, authentication and access control policy template, aligned with the QNRCS (PR.GA-1, PR.GA-3, PR.GA-5, PR.GA-7) and NIS2 obligations."
     },
     "ficheiros": {
       "pt": "pt/politica_controlo_acessos_pme.docx",
@@ -36,8 +36,8 @@
       "en": "Asset Management Policy"
     },
     "descricao": {
-      "pt": "Modelo de política de gestão de ativos adaptado às obrigações NIS2/DL 125/2025.",
-      "en": "Asset management policy template aligned with NIS2/DL 125/2025 obligations."
+      "pt": "Modelo de política de gestão de ativos adaptado às obrigações NIS2.",
+      "en": "Asset management policy template aligned with NIS2 obligations."
     },
     "ficheiros": {
       "pt": "pt/politica_gestao_ativos_pme.docx",
@@ -47,12 +47,12 @@
     {
     "id": "politica_backup",
     "titulo": {
-      "pt": "Política de Backup",
-      "en": "Backup Policy"
+      "pt": "Política de Backup e Recuperação",
+      "en": "Backup and Recovery Policy"
     },
     "descricao": {
-      "pt": "Modelo de política de backup adaptado às obrigações NIS2/DL 125/2025.",
-      "en": "Backup policy template aligned with NIS2/DL 125/2025 obligations."
+      "pt": "Modelo de política de backup e recuperação adaptado às obrigações NIS2.",
+      "en": "Backup and recovery policy template aligned with NIS2 obligations."
     },
     "ficheiros": {
       "pt": "pt/politica_backup_pme.docx",
@@ -66,8 +66,8 @@
       "en": "Password Policy"
     },
     "descricao": {
-      "pt": "Modelo de política de palavras-passe adaptado às obrigações NIS2/DL 125/2025.",
-      "en": "Password policy template aligned with NIS2/DL 125/2025 obligations."
+      "pt": "Modelo de política de palavras-passe adaptado às obrigações NIS2.",
+      "en": "Password policy template aligned with NIS2 obligations."
     },
     "ficheiros": {
       "pt": "pt/politica_palavras_passe_pme.docx",
@@ -77,12 +77,12 @@
       {
     "id": "politica_seguranca_rede",
     "titulo": {
-      "pt": "Política de Segurança de Rede",
+      "pt": "Política de Segurança da Rede",
       "en": "Network Security Policy"
     },
     "descricao": {
-      "pt": "Modelo de política de segurança de rede adaptado às obrigações NIS2/DL 125/2025.",
-      "en": "Network security policy template aligned with NIS2/DL 125/2025 obligations."
+      "pt": "Modelo de política de segurança da rede adaptado às obrigações NIS2.",
+      "en": "Network security policy template aligned with NIS2 obligations."
     },
     "ficheiros": {
       "pt": "pt/politica_seguranca_rede_pme.docx",
@@ -92,12 +92,12 @@
       {
     "id": "politica_vulnerabilidades_patches",
     "titulo": {
-      "pt": "Política de Vulnerabilidades e Patches",
-      "en": "Vulnerability and Patch Policy"
+      "pt": "Política de Gestão de Vulnerabilidades e Patches",
+      "en": "Vulnerability and Patch Management Policy"
     },
     "descricao": {
-      "pt": "Modelo de política de vulnerabilidades e patches adaptado às obrigações NIS2/DL 125/2025.",
-      "en": "Vulnerability and patch policy template aligned with NIS2/DL 125/2025 obligations."
+      "pt": "Modelo de política de gestão de vulnerabilidades e patches adaptado às obrigações NIS2.",
+      "en": "Vulnerability and patch management policy template aligned with NIS2 obligations."
     },
     "ficheiros": {
       "pt": "pt/politica_vuln_patch_pme.docx",
@@ -107,16 +107,106 @@
       {
     "id": "plano_resposta_incidentes",
     "titulo": {
-      "pt": "Plano de Resposta a Incidentes",
-      "en": "Incident Response Plan"
+      "pt": "Plano de Resposta a Incidentes de Cibersegurança",
+      "en": "Cybersecurity Incident Response Plan"
     },
     "descricao": {
-      "pt": "Modelo de plano de resposta a incidentes adaptado às obrigações NIS2/DL 125/2025.",
-      "en": "Incident response plan template aligned with NIS2/DL 125/2025 obligations."
+      "pt": "Modelo de plano de resposta a incidentes de cibersegurança adaptado às obrigações NIS2.",
+      "en": "Cybersecurity incident response plan template aligned with NIS2 obligations."
     },
     "ficheiros": {
       "pt": "pt/plano_resposta_incidente_pme.docx",
       "en": "en/incident_response_plan_pme.docx"
+    }
+  },
+      {
+    "id": "politica_uso_aceitavel",
+    "titulo": {
+      "pt": "Política de Uso Aceitável",
+      "en": "Acceptable Use Policy"
+    },
+    "descricao": {
+      "pt": "Regras de utilização dos sistemas e dados da organização, alinhadas com o QNRCS (GR.FR-4, DE.MC-5) e as obrigações NIS2.",
+      "en": "Rules for using the organisation's systems and data, aligned with the QNRCS (GR.FR-4, DE.MC-5) and NIS2 obligations."
+    },
+    "ficheiros": {
+      "pt": "pt/politica_uso_aceitavel_pme.docx",
+      "en": "en/acceptable_use_policy_pme.docx"
+    }
+  },
+      {
+    "id": "politica_classificacao_dados",
+    "titulo": {
+      "pt": "Política de Classificação e Gestão de Dados",
+      "en": "Data Classification and Management Policy"
+    },
+    "descricao": {
+      "pt": "Como classificar e proteger a informação ao longo do seu ciclo de vida, alinhada com o QNRCS (GR.PP-1, ID.GA-6, ID.GA-8, PR.SD-2) e as obrigações NIS2.",
+      "en": "How to classify and protect information throughout its life cycle, aligned with the QNRCS (GR.PP-1, ID.GA-6, ID.GA-8, PR.SD-2) and NIS2 obligations."
+    },
+    "ficheiros": {
+      "pt": "pt/politica_classificacao_dados_pme.docx",
+      "en": "en/data_classification_policy_pme.docx"
+    }
+  },
+      {
+    "id": "plano_melhoria_continua",
+    "titulo": {
+      "pt": "Plano de Melhoria Contínua",
+      "en": "Continuous Improvement Plan"
+    },
+    "descricao": {
+      "pt": "Como melhorar a cibersegurança de forma contínua a partir de lições, avaliações e testes, alinhado com o QNRCS (GR.FR-1, GR.FR-2, ID.MC-3).",
+      "en": "How to continuously improve cybersecurity from lessons, assessments and tests, aligned with the QNRCS (GR.FR-1, GR.FR-2, ID.MC-3)."
+    },
+    "ficheiros": {
+      "pt": "pt/plano_melhoria_continua_pme.docx",
+      "en": "en/continuous_improvement_plan_pme.docx"
+    }
+  },
+      {
+    "id": "plano_continuidade_negocio",
+    "titulo": {
+      "pt": "Plano de Continuidade de Negócio",
+      "en": "Business Continuity Plan"
+    },
+    "descricao": {
+      "pt": "Manter os serviços essenciais a funcionar em caso de interrupção grave, alinhado com o QNRCS (GR.CO-4, GR.CO-5, GR.CO-6) e as obrigações NIS2.",
+      "en": "Keeping essential services running during a serious disruption, aligned with the QNRCS (GR.CO-4, GR.CO-5, GR.CO-6) and NIS2 obligations."
+    },
+    "ficheiros": {
+      "pt": "pt/plano_continuidade_negocio_pme.docx",
+      "en": "en/business_continuity_plan_pme.docx"
+    }
+  },
+      {
+    "id": "plano_recuperacao_desastres",
+    "titulo": {
+      "pt": "Plano de Recuperação de Desastres",
+      "en": "Disaster Recovery Plan"
+    },
+    "descricao": {
+      "pt": "Recuperar sistemas e dados após um desastre ou incidente grave, alinhado com o QNRCS (GR.PP-3, RC.PR-1, RC.PR-5, RC.CO-1) e as obrigações NIS2.",
+      "en": "Recovering systems and data after a disaster or serious incident, aligned with the QNRCS (GR.PP-3, RC.PR-1, RC.PR-5, RC.CO-1) and NIS2 obligations."
+    },
+    "ficheiros": {
+      "pt": "pt/plano_recuperacao_desastres_pme.docx",
+      "en": "en/disaster_recovery_plan_pme.docx"
+    }
+  },
+      {
+    "id": "politica_risco_cadeia_abastecimento",
+    "titulo": {
+      "pt": "Política de Gestão do Risco da Cadeia de Abastecimento",
+      "en": "Supply Chain Risk Management Policy"
+    },
+    "descricao": {
+      "pt": "Gerir os riscos de cibersegurança dos fornecedores e prestadores de serviços, alinhada com o QNRCS (GR.CA-1, GR.CA-5, GR.CA-7) e as obrigações NIS2.",
+      "en": "Managing the cybersecurity risks of suppliers and service providers, aligned with the QNRCS (GR.CA-1, GR.CA-5, GR.CA-7) and NIS2 obligations."
+    },
+    "ficheiros": {
+      "pt": "pt/politica_risco_cadeia_abastecimento_pme.docx",
+      "en": "en/supply_chain_risk_policy_pme.docx"
     }
   }
 ]

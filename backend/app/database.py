@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 def _criar_engine():
     """Cria o engine SQLAlchemy a partir da DATABASE_URL nas settings."""
     settings = get_settings()
+
     # SQL_ECHO controlado por variável separada de DEBUG (CWE-532).
     # Em prod deve ser False mesmo que DEBUG fique True acidentalmente.
     return create_engine(
@@ -37,7 +38,7 @@ def get_session() -> Generator[Session, None, None]:
     Garante commit automático em sucesso e rollback em exceção.
 
     Uso nos routers:
-        db: Session = Depends(get_session)
+        db: Session = Depends(get_session, scope="function")
     """
     with Session(engine) as session:
         try:

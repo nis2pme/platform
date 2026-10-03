@@ -1,7 +1,7 @@
 """
 Gestão privilegiada de tenants (mecanismo, máquina-a-máquina).
 
-Expõe operações destrutivas/sensíveis sobre uma empresa (suspender/reativar). É
+Expõe uma operação sensível sobre uma empresa: suspender um trial. É
 **mecanismo**, não política: não sabe porque suspende — apenas executa ordens
 autenticadas. A política de quando suspender vive fora do core.
 

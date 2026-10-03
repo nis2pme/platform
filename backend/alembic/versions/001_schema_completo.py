@@ -34,6 +34,9 @@ def upgrade() -> None:
     import app.controlos.models  # noqa: F401
     import app.evidencias.models  # noqa: F401
     import app.frameworks.models  # noqa: F401
+    import app.incidentes.models  # noqa: F401
+    import app.tarefas.models  # noqa: F401
+    import app.formacao.models  # noqa: F401
     import app.notificacoes.models  # noqa: F401
     import app.plano_prioritario.models  # noqa: F401
 
@@ -50,6 +53,9 @@ def downgrade() -> None:
     import app.controlos.models  # noqa: F401
     import app.evidencias.models  # noqa: F401
     import app.frameworks.models  # noqa: F401
+    import app.incidentes.models  # noqa: F401
+    import app.tarefas.models  # noqa: F401
+    import app.formacao.models  # noqa: F401
     import app.notificacoes.models  # noqa: F401
     import app.plano_prioritario.models  # noqa: F401
 

@@ -2,27 +2,84 @@
 Abstração de envio de email transacional.
 
 Suporta dois provedores, controlados pela variável de ambiente EMAIL_PROVIDER:
-  - "smtp"  (default) — usa fastapi-mail com servidor SMTP configurável (on-prem, universal)
+  - "smtp"  (default) — usa aiosmtplib com servidor SMTP configurável (on-prem, universal)
   - "resend"          — usa a API HTTP do Resend (MESMA config do funil saas-trial:
                         RESEND_API_KEY/RESEND_FROM/RESEND_API_URL — um só serviço de
                         email para toda a plataforma)
 
-Toda a lógica de envio fica aqui; o resto da aplicação chama apenas
-`enviar_email_reset_password()` sem se preocupar com o provedor.
+Toda a lógica de envio fica aqui; o resto da aplicação chama `enviar_email()`
+(genérico) ou `enviar_email_reset_password()` sem se preocupar com o provedor.
 """
 import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
 
+# Teto de espera por um servidor SMTP. O default da biblioteca é um minuto: um
+# host errado (ou um IP que engole pacotes) prendia o pedido do administrador
+# esse tempo todo, e prendia também a thread que envia as notificações.
+TIMEOUT_SMTP_SEGUNDOS = 15
 
-async def enviar_email_reset_password(destinatario: str, link: str) -> None:
+
+async def enviar_email(destinatario: str, assunto: str, corpo: str) -> None:
+    """
+    Envia um email de texto simples pelo provedor configurado.
+
+    Não verifica EMAIL_ENABLED nem outros gates — isso é responsabilidade
+    do chamador (o reset tem o seu; as notificações têm o gate duplo em
+    app/notificacoes/email.py).
+
+    Raises:
+        RuntimeError / exceções do provedor se o envio falhar.
+    """
+    from app.config import get_settings
+    settings = get_settings()
+
+    if settings.EMAIL_PROVIDER.lower() == "resend":
+        await _enviar_via_resend(destinatario, assunto, corpo, settings)
+    else:
+        await _enviar_via_smtp(destinatario, assunto, corpo, settings)
+
+
+_RESET_TEXTOS = {
+    "pt": {
+        "assunto": "Recuperação de Palavra-passe — NIS2PME",
+        "corpo": (
+            "Olá,\n\n"
+            "Recebemos um pedido de recuperação de palavra-passe para a sua conta.\n\n"
+            "Clique no link abaixo para definir uma nova palavra-passe (válido 1 hora):\n"
+            "{link}\n\n"
+            "Se não solicitou este email, ignore-o. O link expira automaticamente.\n\n"
+            "NIS2PME"
+        ),
+    },
+    "en": {
+        "assunto": "Password recovery — NIS2PME",
+        "corpo": (
+            "Hello,\n\n"
+            "We received a password recovery request for your account.\n\n"
+            "Click the link below to set a new password (valid for 1 hour):\n"
+            "{link}\n\n"
+            "If you did not request this email, ignore it. The link expires automatically.\n\n"
+            "NIS2PME"
+        ),
+    },
+}
+
+
+def textos_email(tabela: dict, locale: str | None) -> dict:
+    """Escolhe a língua de um email: a da empresa, senão português."""
+    return tabela.get((locale or "pt").split("-")[0].lower(), tabela["pt"])
+
+
+async def enviar_email_reset_password(destinatario: str, link: str, locale: str | None = None) -> None:
     """
     Envia email de recuperação de password para o endereço indicado.
 
     Args:
         destinatario: Endereço de email do destinatário.
         link:         Link de reset completo (APP_URL + token).
+        locale:       Língua do destinatário (a da empresa); português por defeito.
 
     Raises:
         RuntimeError: Se o envio falhar (para tratamento no caller).
@@ -36,50 +93,104 @@ async def enviar_email_reset_password(destinatario: str, link: str) -> None:
         )
         return
 
-    assunto = "Recuperação de Palavra-passe — NIS2PME"
-    corpo = (
-        f"Olá,\n\n"
-        f"Recebemos um pedido de recuperação de palavra-passe para a sua conta.\n\n"
-        f"Clique no link abaixo para definir uma nova palavra-passe (válido 1 hora):\n"
-        f"{link}\n\n"
-        f"Se não solicitou este email, ignore-o. O link expira automaticamente.\n\n"
-        f"NIS2PME"
+    textos = textos_email(_RESET_TEXTOS, locale)
+    await enviar_email(destinatario, textos["assunto"], textos["corpo"].format(link=link))
+
+
+async def enviar_email_smtp(
+    destinatario: str,
+    assunto: str,
+    corpo: str,
+    *,
+    host: str,
+    porta: int,
+    utilizador: str,
+    password: str,
+    from_email: str,
+    from_name: str,
+    starttls: bool,
+    ssl_tls: bool,
+    timeout: int = TIMEOUT_SMTP_SEGUNDOS,
+) -> None:
+    """
+    Envia por um servidor SMTP indicado explicitamente.
+
+    Existe separada do `_enviar_via_smtp` para que o ecrã de definições possa
+    experimentar uma configuração ANTES de a gravar: a que está guardada continua
+    intacta enquanto o administrador afina a nova.
+
+    STARTTLS e TLS implícito excluem-se: pedidos os dois, fica o implícito, que é
+    o que a porta 465 espera. Sem isto a biblioteca recusaria a ligação e o
+    administrador via um erro sem relação com o que configurou.
+
+    **Todos os parâmetros de ligação vão explícitos, nenhum por omissão.** Não é
+    verbosidade: o que aqui fica por dizer passa a ser decidido pela biblioteca, e
+    muda quando ela mudar. Dois deles guardam comportamento que ninguém veria
+    quebrar — o `validate_certs`, sem o qual um intermediário se faz passar pelo
+    servidor, e o `start_tls`, cujo valor por omissão é *subir para TLS se o
+    servidor o anunciar* (com ele omisso, uma instalação com `SMTP_TLS=false`
+    passaria a cifrar sozinha, ou a deixar de o fazer, sem uma linha de aviso).
+    """
+    import aiosmtplib
+    from email.message import EmailMessage
+    from email.utils import formataddr
+
+    mensagem = EmailMessage()
+    # `formataddr` cita o nome e codifica-o em RFC 2047 quando tem acentos, sem
+    # tocar no endereço — que tem de continuar legível para o servidor.
+    mensagem["From"] = formataddr((from_name, from_email)) if from_name else from_email
+    mensagem["To"] = destinatario
+    mensagem["Subject"] = assunto
+    mensagem.set_content(corpo)
+
+    await aiosmtplib.send(
+        mensagem,
+        # O envelope vai explícito em vez de ser extraído dos cabeçalhos: quem
+        # recebe a mensagem não decide para onde ela é entregue.
+        sender=from_email,
+        recipients=[destinatario],
+        hostname=host,
+        port=porta,
+        # Cadeia vazia NÃO é ausência de utilizador: o cliente autentica sempre
+        # que o nome não for None, e tentaria AUTH com utilizador vazio contra um
+        # relay interno que não pede credenciais nenhumas.
+        username=utilizador or None,
+        password=password or None,
+        timeout=timeout,
+        use_tls=ssl_tls,
+        start_tls=starttls and not ssl_tls,
+        # Fixado, não herdado: é o que impede alguém no caminho de se fazer passar
+        # pelo servidor de email.
+        validate_certs=True,
+        # None mantém o EHLO com o FQDN da máquina, que é o que sempre se enviou.
+        local_hostname=None,
+        # Sem certificados de cliente nem contexto TLS próprio. Declarados para
+        # que uma omissão futura da biblioteca não os invente.
+        cert_bundle=None,
+        client_cert=None,
+        client_key=None,
+        tls_context=None,
     )
-
-    provedor = settings.EMAIL_PROVIDER.lower()
-
-    if provedor == "resend":
-        await _enviar_via_resend(destinatario, assunto, corpo, settings)
-    else:
-        await _enviar_via_smtp(destinatario, assunto, corpo, settings)
 
 
 async def _enviar_via_smtp(
     destinatario: str, assunto: str, corpo: str, settings
 ) -> None:
-    """Envia usando fastapi-mail com servidor SMTP."""
-    from fastapi_mail import ConnectionConfig, FastMail, MessageSchema, MessageType
-
-    conf = ConnectionConfig(
-        MAIL_USERNAME=settings.SMTP_USER,
-        MAIL_PASSWORD=settings.SMTP_PASSWORD,
-        MAIL_FROM=settings.SMTP_FROM_EMAIL,
-        MAIL_PORT=settings.SMTP_PORT,
-        MAIL_SERVER=settings.SMTP_HOST,
-        MAIL_FROM_NAME=settings.SMTP_FROM_NAME,
-        MAIL_STARTTLS=settings.SMTP_TLS,
-        MAIL_SSL_TLS=False,
-        USE_CREDENTIALS=bool(settings.SMTP_USER),
+    """Envia usando o servidor SMTP configurado na instalação."""
+    await enviar_email_smtp(
+        destinatario,
+        assunto,
+        corpo,
+        host=settings.SMTP_HOST,
+        porta=settings.SMTP_PORT,
+        utilizador=settings.SMTP_USER,
+        password=settings.SMTP_PASSWORD,
+        from_email=settings.SMTP_FROM_EMAIL,
+        from_name=settings.SMTP_FROM_NAME,
+        starttls=settings.SMTP_TLS,
+        ssl_tls=settings.SMTP_SSL,
     )
-    mensagem = MessageSchema(
-        subject=assunto,
-        recipients=[destinatario],
-        body=corpo,
-        subtype=MessageType.plain,
-    )
-    fm = FastMail(conf)
-    await fm.send_message(mensagem)
-    logger.info("Email de reset enviado via SMTP para %s", destinatario)
+    logger.info("Email enviado via SMTP para %s", destinatario)
 
 
 async def _enviar_via_resend(

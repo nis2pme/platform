@@ -19,9 +19,9 @@
 
 ## O que é o NIS2PME?
 
-O **NIS2PME** é uma plataforma **SaaS multi-tenant de GRC** (*Governance, Risk & Compliance*) que ajuda as **PME portuguesas** a autoavaliar a conformidade com a **Diretiva NIS2** (transposta pelo *Regime Jurídico da Cibersegurança*, atualizado pelo *Decreto-Lei n.º 125/2025*) e o **QNRCS 2026** (Quadro Nacional de Referência para a Cibersegurança).
+O **NIS2PME** é uma plataforma **SaaS multi-tenant de GRC** (*Governance, Risk & Compliance*) que ajuda as **PME portuguesas** a autoavaliar a conformidade com a **Diretiva NIS2** (transposta pelo *Regime Jurídico da Cibersegurança*, aprovado pelo *Decreto-Lei n.º 125/2025*) e o **QNRCS 2026** (Quadro Nacional de Referência para a Cibersegurança).
 
-Assenta num **Universal Control Framework (UCF)** capaz de representar qualquer quadro normativo, aqui instanciado para os **107 controlos** do **QNRCS 2026**, conforme publicado no *Regulamento n.º 756/2026* (de 22 de junho de 2026).
+Assenta num **Universal Control Framework (UCF)** capaz de representar qualquer quadro normativo, aqui instanciado para os **107 controlos** do **QNRCS 2026**, com base no *Regulamento n.º 756/2026* (de 22 de junho de 2026).
 
 A plataforma é oferecida num **modelo dual**:
 
@@ -38,7 +38,7 @@ Este repositório contém o **núcleo open source on-premises**.
 |----------|-----------|
 | **Universal Control Framework (UCF)** | Um modelo genérico que representa qualquer quadro normativo. Carregado aqui com os 107 controlos do QNRCS 2026; outros frameworks podem ser adicionados sem alterar código. |
 | **Gated Maturity Model (GMM)** | A maturidade é desbloqueada nível a nível: o nível seguinte só abre quando os sub-requisitos do nível atual estão cumpridos, com uma **fórmula de conformidade ponderada**. |
-| **Plano de ações prioritárias** | Gerado automaticamente, cruzando as vulnerabilidades mais comuns das PME com os controlos — indica **por onde começar**. |
+| **Plano de ações prioritárias** | Gerado a partir de um questionário de diagnóstico de 10 perguntas mapeado aos controlos — indica **por onde começar**. |
 | **Gestão de evidências** | Carrega e associa ficheiros de evidência cifrados a cada controlo, para suportar a autoavaliação. |
 
 ---
@@ -46,8 +46,13 @@ Este repositório contém o **núcleo open source on-premises**.
 ## Funcionalidades
 
 - 📊 **Dashboard de maturidade** com gráficos radar e pontuação de conformidade ponderada
-- 🧭 **Assistente de configuração guiado** que determina se és entidade *importante* ou *essencial*
+- 🧭 **Assistente de configuração guiado** onde escolhes a classificação NIS2 (*importante*/*essencial*) e o nível de conformidade QNRCS
 - 🗂️ Armazenamento de **evidências cifradas** (Fernet) associadas aos controlos
+- 🚨 **Gestão de incidentes** com os prazos legais do RJC (arts. 42.º–44.º), numa linha temporal append-only: notificação inicial até 24h após a confirmação de significância, atualização até 72h se necessária, notificação de fim de impacto até 24h, relatório final até 30 dias úteis e notificação à CNPD até 72h (RGPD)
+- ✅ **Tarefas de conformidade recorrentes**: catálogo de obrigações periódicas (revisão de acessos, testes de backup, formação anual, exercícios…) com acompanhamento de prazos
+- 🎓 **Registo de formação**, incluindo a formação obrigatória do órgão de gestão (Art. 20)
+- 📄 **Modelos de políticas e planos** (DOCX) prontos a descarregar e personalizar
+- 📈 **Relatórios de conformidade**: gap analysis, resumo executivo, matriz de capacidades e histórico semanal de conformidade
 - 📑 **Relatórios PDF** gerados no cliente
 - 🔐 **Segurança forte**: hashing de passwords com Argon2id, autenticação JWT, **2FA/TOTP** e **registo de auditoria** completo
 - 🌐 **Deploy autossuficiente**: PostgreSQL + FastAPI + nginx, com secrets gerados automaticamente no primeiro arranque
@@ -85,7 +90,7 @@ curl -fsSL https://raw.githubusercontent.com/nis2pme/platform/main/start_nis2pme
 
 No fim, abre no browser o URL que aparece (ex.: `https://192.168.1.50`) para correr o **assistente de configuração**.
 
-> ℹ️ **O one-liner corre sem perguntas.** Ao ser enviado para o `bash` não tem terminal, por isso usa defaults: o menu de idioma é saltado (**Português**) e é gerado um **certificado temporário self-signed** (o browser avisa na 1.ª visita — é normal). Para escolheres o idioma e o modo TLS (certificado próprio / atrás de proxy / self-signed), descarrega e corre antes: `sh start_nis2pme.sh`. Podes sempre definir ou substituir o certificado mais tarde no assistente de configuração.
+> ℹ️ **O one-liner corre sem perguntas.** Ao ser enviado para o `bash` não tem terminal, por isso usa defaults: o menu de idioma é saltado (**Português**) e é gerado um **certificado temporário self-signed** (o browser avisa na 1.ª visita — é normal). Para escolheres o idioma e o modo TLS (certificado próprio / atrás de proxy / self-signed), descarrega e corre antes: `sh start_nis2pme.sh`. Podes definir ou substituir o certificado no assistente de primeira configuração.
 
 ### Opção 2 — Docker Compose (um pouco mais de controlo)
 
@@ -125,7 +130,7 @@ Para construíres as imagens tu próprio em vez de as puxar, vê o [CONTRIBUTING
 
 Após o arranque, abre o URL indicado. O assistente guia-te em 5 passos:
 
-1. **Dados da empresa** — nome, sector, dimensão (micro/pequena/média). O sistema determina o nível de conformidade exigido (entidade importante vs. essencial).
+1. **Dados da empresa** — nome, sector, dimensão (micro/pequena/média/grande), classificação NIS2 (importante/essencial) e nível de conformidade QNRCS (Básico/Substancial/Elevado). O assistente pré-preenche ambos a partir do sector, mas a escolha é tua.
 2. **Conta de administrador** — nome, email e password do utilizador administrador principal.
 3. **Email (SMTP)** (opcional) — envio de email para reposição de password; pode ser configurado mais tarde.
 4. **HTTPS** — revisão do certificado TLS ativo e opção de o manter ou carregar/substituir pelo teu próprio.
@@ -135,7 +140,7 @@ A autenticação de dois fatores (TOTP), obrigatória, é depois enrolada antes 
 
 És depois redirecionado para o **dashboard de maturidade**.
 
-📘 Guia completo de operação, manutenção, backups e troubleshooting: **[MANUAL.md](MANUAL.md)**.
+📘 Guia completo de operação, manutenção, backups e troubleshooting: **[MANUAL.pt-PT.md](MANUAL.pt-PT.md)**.
 
 ---
 
@@ -150,7 +155,7 @@ A autenticação de dois fatores (TOTP), obrigatória, é depois enrolada antes 
 
 ## Configuração
 
-A maioria das definições é gerada automaticamente no primeiro arranque e guardada em volumes Docker. Os valores que podes definir no `.env` são `APP_URL`, `DB_PASSWORD` e `TLS_MODE` (e os caminhos do certificado quando `TLS_MODE=custom`). As definições opcionais (portos personalizados, SMTP para reset de password, domínio/HTTPS) estão documentadas no [`.env.example`](.env.example) e no [MANUAL.md](MANUAL.md).
+A maioria das definições é gerada automaticamente no primeiro arranque e guardada em volumes Docker. Os valores que podes definir no `.env` são `APP_URL`, `DB_PASSWORD` e `TLS_MODE` (e os caminhos do certificado quando `TLS_MODE=custom`). As definições opcionais (portos personalizados, SMTP para reset de password, domínio/HTTPS) estão documentadas no [`.env.example`](.env.example) e no [MANUAL.pt-PT.md](MANUAL.pt-PT.md).
 
 > ⚠️ **Faz backup regular dos volumes `nis2pme_pgdata` (base de dados), `nis2pme_uploads` (evidências) e `nis2pme_data` (secrets de cifra).** Perder o `nis2pme_data` significa que os dados cifrados deixam de poder ser decifrados.
 

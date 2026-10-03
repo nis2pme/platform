@@ -13,7 +13,7 @@ Em modo saas o TLS é sempre tratado a montante (Cloudflare) — este módulo n�
 import logging
 import os
 from datetime import datetime, timedelta, timezone
-from ipaddress import AddressValueError, IPv4Address
+from ipaddress import IPv4Address, ip_address
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -71,21 +71,213 @@ log_format cf_audit '$realip_remote_addr -> $remote_addr cf=$http_cf_connecting_
 )
 _ACCESS_LOG = "    access_log /var/log/nginx/access.log cf_audit;" if _TRUST_CF else ""
 
-# Cabeçalhos de segurança comuns (sem HSTS — HSTS só no modo custom)
-_SEC_HEADERS = """\
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'" always;"""
+# Cabeçalhos de segurança comuns (sem HSTS — HSTS só no modo custom).
+# Uma única fonte: em nginx, um add_header dentro de uma location CANCELA todos
+# os herdados do server, por isso quem define add_header tem de repetir estes.
+# Mantê-los aqui numa lista evita cópias que divergem em silêncio.
+#
+# REGRA DE FRONTEIRA: estes cabeçalhos entram nas locations que servem a SPA, e
+# NUNCA ao nível do server. Quem responde por /api/ é o middleware do backend, e
+# uma location sem add_header próprio herdaria os do server — os dois conjuntos
+# chegavam ao cliente ao mesmo tempo, com X-Frame-Options e CSP em contradição
+# (SAMEORIGIN vs DENY, 'self' vs 'none'). Perante cabeçalhos duplicados e
+# divergentes os browsers não se comportam todos da mesma maneira, e há motores
+# que ignoram o cabeçalho — a proteção desaparecia onde se julgava existir.
+#
+# Cada camada trata do que serve: o nginx da SPA, o backend da API.
+_SEC_HEADERS_LINHAS = (
+    'add_header X-Frame-Options "SAMEORIGIN" always;',
+    'add_header X-Content-Type-Options "nosniff" always;',
+    'add_header Referrer-Policy "strict-origin-when-cross-origin" always;',
+    "add_header Content-Security-Policy \"default-src 'self'; script-src 'self'; "
+    "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; "
+    "connect-src 'self'; frame-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; "
+    "form-action 'self'; object-src 'none'\" always;",
+)
+
+_HSTS_TEXTO = 'add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;'
+
+
+def _sec_headers(indentacao: str = "    ") -> str:
+    """Os cabeçalhos de segurança, com a indentação do bloco onde vão entrar."""
+    return "\n".join(f"{indentacao}{linha}" for linha in _SEC_HEADERS_LINHAS)
+
 
 # ---------------------------------------------------------------------------
 # Templates nginx
 # ---------------------------------------------------------------------------
 
+# Versão do template: incrementar quando as configs geradas mudarem de layout.
+# O carimbo vai no cabeçalho de cada config gerada; no arranque, uma config
+# NOSSA com carimbo antigo é regenerada (preservando modo TLS e certificados).
+#
+# v5: os cabeçalhos de segurança saíram do nível server para as locations da
+# SPA. Ao nível do server caíam por herança nas locations de /api/, e chegavam
+# ao cliente juntamente com os do backend — dois X-Frame-Options e duas CSP em
+# contradição.
+# v6: a location dos backups perdeu a barra final, que a punha a discutir com a
+# aplicação sobre a forma do caminho — cada uma a redirecionar para a outra.
+# v7: `server_tokens off` (a versão do nginx deixa de ir em cada resposta) e
+# `proxy_redirect` a repor o esquema real nas redireções vindas da aplicação,
+# que saíam em `http://` e faziam o cliente descer a ligação a texto simples.
+# v8: o modo proxy tinha ficado sem `server_tokens off` (só o HTTP e o HTTPS o
+# tinham) e o HTTPS deixa de emitir session tickets — com a chave de tickets
+# em memória e sem rotação, um ticket antigo permitia retomar sessões passadas.
+# v9: o index.html passa a ir com `Cache-Control: no-cache`. Sem isso o browser
+# podia reutilizar um index.html de uma versão anterior, a apontar para ficheiros
+# que a atualização já tirou do servidor.
+_CONFIG_STAMP = "(template v9)"
+
+
+def _loc_assets(hsts: bool = False) -> str:
+    """Location dos ficheiros estáticos com hash de conteúdo no nome (Vite).
+
+    Duas razões para existir:
+      - o nome muda sempre que o conteúdo muda, por isso o ficheiro pode ficar
+        em cache indefinidamente; sem isto o browser revalida tudo a cada visita;
+      - `try_files ... =404` impede que um pedido a um ficheiro inexistente caia
+        no fallback da SPA e receba o index.html com estado 200 — o browser
+        tentaria interpretar HTML como JavaScript e falharia de forma opaca.
+
+    Repete os cabeçalhos de segurança de propósito: o add_header abaixo cancela
+    os herdados do server (comportamento do nginx, não engano).
+    """
+    # Um único Cache-Control: a diretiva `expires` do nginx emitiria um segundo
+    # cabeçalho com o mesmo nome — válido, mas confuso para quem ler a config.
+    linhas = [
+        "    location ~* \\.(js|css|woff2?|ttf|eot|svg|png|jpg|jpeg|gif|ico)$ {",
+        "        try_files $uri =404;",
+        "        access_log off;",
+        '        add_header Cache-Control "public, max-age=31536000, immutable" always;',
+    ]
+    if hsts:
+        linhas.append(f"        {_HSTS_TEXTO}")
+    linhas.append(_sec_headers("        "))
+    linhas.append("    }")
+    return "\n".join(linhas)
+
+
+# A versão exata do nginx no cabeçalho `Server` só serve a quem procura alvos
+# para uma vulnerabilidade conhecida dessa versão. Não é segredo — descobre-se
+# por outras vias — mas oferecê-la em cada resposta poupa trabalho ao lado
+# errado. Fica ao nível do http (este ficheiro é incluído lá dentro), para valer
+# em todos os server blocks sem ter de se repetir em cada um.
+_SERVER_TOKENS = "server_tokens off;"
+
+
+def _proxy_redirect(proto_var: str = "$scheme") -> str:
+    """Repõe o esquema real nas redireções que a aplicação gera.
+
+    A aplicação não sabe que o pedido chegou por TLS: quem termina o TLS é este
+    nginx, e o processo de trás recebe uma ligação em claro. Quando ela gera uma
+    redireção — por exemplo para normalizar a barra final de um caminho — escreve
+    `http://`, e o cliente que a siga desce a ligação para texto simples antes de
+    voltar a subir. Aqui reescreve-se o esquema com o da ligação real do cliente,
+    que este bloco conhece.
+
+    Corrige-se aqui, e não a mandar a aplicação confiar no `X-Forwarded-Proto`,
+    porque essa confiança muda também a origem do IP do cliente — que alimenta o
+    rate limiting e o registo de auditoria — e é uma decisão de postura, não uma
+    correção de caminho. Com `$scheme` a valer "http", a reescrita é identidade e
+    não faz nada.
+    """
+    return f"        proxy_redirect http:// {proto_var}://;"
+
+
+def _loc_spa(hsts: bool = False) -> str:
+    """Locations da SPA — e o sítio onde os cabeçalhos da SPA vivem.
+
+    Qualquer rota desconhecida serve o index.html, porque o encaminhamento é
+    feito no browser pelo router do Vue.
+
+    O index.html tem uma location própria, onde acaba sempre (o `try_files` e o
+    `index` redirecionam para ela por dentro): vai com `Cache-Control: no-cache`,
+    para o browser confirmar a cada visita se há versão nova. Os outros ficheiros
+    têm o hash no nome e ficam em cache; o index.html é o único que diz quais
+    carregar, e um antigo em cache apontaria para ficheiros que já não existem.
+
+    Os cabeçalhos de segurança são declarados aqui, e não ao nível do server,
+    para não caírem por herança nas locations de /api/ — ver a nota em
+    `_SEC_HEADERS_LINHAS`. A location do index.html define um add_header, logo
+    repete-os.
+    """
+    linhas = [
+        "    location / {",
+        "        try_files $uri $uri/ /index.html;",
+    ]
+    if hsts:
+        linhas.append(f"        {_HSTS_TEXTO}")
+    linhas.append(_sec_headers("        "))
+    linhas.append("    }")
+    linhas.append("")
+    linhas.append("    location = /index.html {")
+    linhas.append('        add_header Cache-Control "no-cache" always;')
+    if hsts:
+        linhas.append(f"        {_HSTS_TEXTO}")
+    linhas.append(_sec_headers("        "))
+    linhas.append("    }")
+    return "\n".join(linhas)
+
+
+def _loc_dossie(proto_var: str = "$scheme") -> str:
+    """Location dedicada ao dossiê de auditoria: gerar+descarregar um .nis2pme
+    com evidências pode demorar bem mais do que os timeouts do /api/ geral.
+    Sem barra final: apanha /api/dossie E /api/dossie/... ."""
+    return f"""\
+    location /api/dossie {{
+        resolver 127.0.0.11 valid=10s ipv6=off;
+        set $nis2pme_backend_dsr backend;
+        proxy_pass         http://$nis2pme_backend_dsr:8000;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto {proto_var};
+{_proxy_redirect(proto_var)}
+        proxy_read_timeout 1800s;
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 1800s;
+        client_max_body_size 256m;
+        proxy_buffering off;
+        # O parecer (até 256 MiB) passa à medida que chega, como os backups: com o
+        # buffering, o nginx guardava-o inteiro no disco dele antes de o backend
+        # poder recusar um pedido sem sessão.
+        proxy_request_buffering off;
+    }}"""
+
+
+def _loc_backups(proto_var: str = "$scheme") -> str:
+    """Location dedicada aos backups: importação de .nbk grandes e operações
+    demoradas (inspecionar/restaurar decifram e aplicam dumps completos) —
+    limites próprios, mais largos do que os do /api/ geral.
+
+    Sem barra final, como a do dossiê: apanha /api/backups E /api/backups/... .
+    Com barra final, um pedido a /api/backups entrava num ciclo de redireções —
+    o nginx acrescentava a barra, a aplicação (que regista a rota sem ela)
+    tirava-a outra vez, e o cliente ficava a saltar entre as duas para sempre.
+    """
+    return f"""\
+    location /api/backups {{
+        resolver 127.0.0.11 valid=10s ipv6=off;
+        set $nis2pme_backend_bkp backend;
+        proxy_pass         http://$nis2pme_backend_bkp:8000;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto {proto_var};
+{_proxy_redirect(proto_var)}
+        proxy_read_timeout 1800s;
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 1800s;
+        client_max_body_size 4g;
+        proxy_request_buffering off;
+    }}"""
+
+
 # HTTP simples (legado — modo "none"). Mantido por compatibilidade.
 _NGINX_HTTP = f"""\
 # NIS2PME — Nginx config (HTTP)
-# Gerado automaticamente. Nao editar manualmente.
+# Gerado automaticamente. Nao editar manualmente. {_CONFIG_STAMP}
+{_SERVER_TOKENS}
 {_LOG_FORMAT}
 server {{
     listen 80;
@@ -99,7 +291,6 @@ server {{
 
 {_REAL_IP}
 {_ACCESS_LOG}
-{_SEC_HEADERS}
 
     location /api/ {{
         # Re-resolver o upstream em runtime (DNS embebido do Docker) — senão o
@@ -111,21 +302,26 @@ server {{
         proxy_set_header   X-Real-IP         $remote_addr;
         proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header   X-Forwarded-Proto $scheme;
+{_proxy_redirect()}
         proxy_read_timeout 120s;
         proxy_connect_timeout 10s;
         proxy_send_timeout 120s;
         client_max_body_size 15M;
     }}
 
-    location / {{
-        try_files $uri $uri/ /index.html;
-    }}
+{_loc_backups()}
+
+{_loc_dossie()}
+
+{_loc_spa()}
 
     location ~ /\\. {{
         deny all;
         access_log off;
         log_not_found off;
     }}
+
+{_loc_assets()}
 }}
 """
 
@@ -136,7 +332,8 @@ server {{
 # está exposto diretamente). Caso contrário um cliente poderia forjar o header.
 _NGINX_PROXY = f"""\
 # NIS2PME — Nginx config (proxy / TLS a montante)
-# Gerado automaticamente. Nao editar manualmente.
+# Gerado automaticamente. Nao editar manualmente. {_CONFIG_STAMP}
+{_SERVER_TOKENS}
 {_LOG_FORMAT}
 map $http_x_forwarded_proto $nis2pme_proto {{
     default $scheme;
@@ -155,7 +352,6 @@ server {{
 
 {_REAL_IP}
 {_ACCESS_LOG}
-{_SEC_HEADERS}
 
     location /api/ {{
         # Re-resolver o upstream em runtime (DNS embebido do Docker) — senão o
@@ -167,28 +363,34 @@ server {{
         proxy_set_header   X-Real-IP         $remote_addr;
         proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header   X-Forwarded-Proto $nis2pme_proto;
+{_proxy_redirect("$nis2pme_proto")}
         proxy_read_timeout 120s;
         proxy_connect_timeout 10s;
         proxy_send_timeout 120s;
         client_max_body_size 15M;
     }}
 
-    location / {{
-        try_files $uri $uri/ /index.html;
-    }}
+{_loc_backups("$nis2pme_proto")}
+
+{_loc_dossie("$nis2pme_proto")}
+
+{_loc_spa()}
 
     location ~ /\\. {{
         deny all;
         access_log off;
         log_not_found off;
     }}
+
+{_loc_assets()}
 }}
 """
 
 # HTTPS — {{HSTS}} é substituído pela linha de HSTS (custom) ou por vazio (self-signed).
 _NGINX_HTTPS_TPL = """\
 # NIS2PME — Nginx config (HTTPS)
-# Gerado automaticamente. Nao editar manualmente.
+# Gerado automaticamente. Nao editar manualmente. __STAMP__
+__SERVER_TOKENS__
 __LOG_FORMAT__
 # Redirect HTTP -> HTTPS
 server {
@@ -210,6 +412,7 @@ server {
     ssl_prefer_server_ciphers off;
     ssl_session_timeout 1d;
     ssl_session_cache   shared:MozSSL:10m;
+    ssl_session_tickets off;
 
     gzip on;
     gzip_types text/plain text/css application/json application/javascript text/xml application/xml text/javascript;
@@ -217,11 +420,6 @@ server {
 
 __REAL_IP__
 __ACCESS_LOG__
-__HSTS__
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'" always;
 
     location /api/ {
         # Re-resolver o upstream em runtime (DNS embebido do Docker) — senão o
@@ -233,30 +431,47 @@ __HSTS__
         proxy_set_header   X-Real-IP         $remote_addr;
         proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_redirect http:// $scheme://;
         proxy_read_timeout 120s;
         proxy_connect_timeout 10s;
         proxy_send_timeout 120s;
         client_max_body_size 15M;
     }
 
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
+__LOC_BACKUPS__
+
+__LOC_DOSSIE__
+
+__LOC_SPA__
 
     location ~ /\\. {
         deny all;
         access_log off;
         log_not_found off;
     }
+
+__LOC_ASSETS__
 }
 """
 
-_HSTS_LINE = '    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;'
-
 
 def _config_https(com_hsts: bool) -> str:
-    """Constrói a config HTTPS, com ou sem cabeçalho HSTS."""
-    cfg = _NGINX_HTTPS_TPL.replace("__HSTS__", _HSTS_LINE if com_hsts else "")
+    """Constrói a config HTTPS, com ou sem cabeçalho HSTS.
+
+    O HSTS acompanha os restantes cabeçalhos: entra nas locations da SPA, nunca
+    ao nível do server. Nas respostas de /api/ quem o decide é o backend, que já
+    o condiciona a ligação mesmo cifrada e a endereço de domínio — um HSTS numa
+    instalação self-signed por IP trancaria o acesso ao primeiro aviso de
+    certificado.
+    """
+    cfg = _NGINX_HTTPS_TPL.replace("__STAMP__", _CONFIG_STAMP)
+    cfg = cfg.replace("__SERVER_TOKENS__", _SERVER_TOKENS)
+    cfg = cfg.replace("__LOC_BACKUPS__", _loc_backups())
+    cfg = cfg.replace("__LOC_DOSSIE__", _loc_dossie())
+    cfg = cfg.replace("__LOC_SPA__", _loc_spa(hsts=com_hsts))
+    # A location dos assets define add_header, logo perde os herdados — inclui
+    # o HSTS pela mesma razão que os restantes cabeçalhos.
+    cfg = cfg.replace("__LOC_ASSETS__", _loc_assets(hsts=com_hsts))
     cfg = cfg.replace("__LOG_FORMAT__", _LOG_FORMAT)
     cfg = cfg.replace("__ACCESS_LOG__", _ACCESS_LOG)
     return cfg.replace("__REAL_IP__", _REAL_IP)
@@ -286,11 +501,12 @@ def _gerar_certificado_autoassinado(app_url: str) -> tuple[bytes, bytes]:
         x509.NameAttribute(NameOID.ORGANIZATION_NAME, "NIS2PME"),
     ])
 
-    # SANs: hostname principal + localhost + 127.0.0.1
+    # SANs: hostname principal + localhost + 127.0.0.1. O hostname pode ser um
+    # nome, um IPv4 ou um IPv6 (o `APP_URL` traz o IPv6 sem os parênteses).
     san_entries: list = [x509.DNSName("localhost"), x509.IPAddress(IPv4Address("127.0.0.1"))]
     try:
-        san_entries.insert(0, x509.IPAddress(IPv4Address(hostname)))
-    except AddressValueError:
+        san_entries.insert(0, x509.IPAddress(ip_address(hostname)))
+    except ValueError:
         san_entries.insert(0, x509.DNSName(hostname))
 
     cert = (
@@ -319,10 +535,40 @@ def _gerar_certificado_autoassinado(app_url: str) -> tuple[bytes, bytes]:
 # Validação de certificado próprio
 # ---------------------------------------------------------------------------
 
-def _validar_certificado_proprio(cert_pem: str, key_pem: str) -> None:
+def _san_cobre_hostname(cert, hostname: str) -> bool:
+    """Diz se o certificado é válido para o nome (ou IP) por onde a app é servida.
+
+    Um certificado que não cobre o hostname do `APP_URL` instala-se sem erro e
+    o browser recusa-o na primeira visita — e a mensagem "instalado com
+    sucesso" já foi dada. Conferir aqui evita trancar o operador fora.
     """
-    Valida que cert_pem e key_pem são um par válido e não expirado.
-    Lança HTTPException 422 em caso de erro.
+    from cryptography import x509
+
+    try:
+        san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    except x509.ExtensionNotFound:
+        return False
+    try:
+        ip = ip_address(hostname)
+    except ValueError:
+        ip = None
+    if ip is not None:
+        return ip in san.get_values_for_type(x509.IPAddress)
+    alvo = hostname.lower().rstrip(".")
+    for nome in san.get_values_for_type(x509.DNSName):
+        nome = nome.lower().rstrip(".")
+        if nome == alvo:
+            return True
+        if nome.startswith("*.") and "." in alvo and alvo.split(".", 1)[1] == nome[2:]:
+            return True
+    return False
+
+
+def _validar_certificado_proprio(cert_pem: str, key_pem: str, hostname: str | None = None) -> list[str]:
+    """
+    Valida que cert_pem e key_pem são um par válido, não expirado e — quando se
+    conhece o hostname — emitido para ele. Lança HTTPException 422 em caso de
+    erro; devolve avisos não bloqueantes (ex.: cadeia intermédia em falta).
     """
     from cryptography import x509
     from cryptography.hazmat.primitives.serialization import load_pem_private_key
@@ -334,6 +580,28 @@ def _validar_certificado_proprio(cert_pem: str, key_pem: str) -> None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Certificado PEM inválido. Verifique que o ficheiro está no formato correcto (-----BEGIN CERTIFICATE-----).",
+        )
+
+    if hostname and not _san_cobre_hostname(cert, hostname):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"O certificado não é válido para '{hostname}' (o nome de APP_URL): os nomes "
+                "que cobre (SAN) não o incluem. O browser recusá-lo-ia. Use um certificado "
+                "emitido para esse nome ou corrija o APP_URL."
+            ),
+        )
+
+    avisos: list[str] = []
+    # Um certificado emitido por uma CA vem quase sempre com uma intermédia; sem
+    # ela no PEM (fullchain) alguns browsers e todos os clientes sem cache de
+    # intermédias recusam a ligação. Não se recusa — há CAs que assinam direto
+    # da raiz — mas diz-se.
+    if cert.issuer != cert.subject and cert_pem.count("-----BEGIN CERTIFICATE-----") == 1:
+        avisos.append(
+            "O PEM traz só um certificado e não é autoassinado: se a CA usa uma "
+            "intermédia, cole o fullchain (certificado + intermédias), senão alguns "
+            "browsers vão recusar a ligação."
         )
 
     # Verificar expiração
@@ -366,6 +634,7 @@ def _validar_certificado_proprio(cert_pem: str, key_pem: str) -> None:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="O certificado e a chave privada não correspondem. Certifique-se de que fazem parte do mesmo par.",
         )
+    return avisos
 
 
 # ---------------------------------------------------------------------------
@@ -463,7 +732,8 @@ def configurar_nginx_https(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="cert_pem e key_pem são obrigatórios para modo=custom.",
             )
-        _validar_certificado_proprio(cert_pem, key_pem)
+        hostname = urlparse(app_url).hostname or "servidor"
+        avisos = _validar_certificado_proprio(cert_pem, key_pem, hostname=urlparse(app_url).hostname)
         certs_dir.mkdir(parents=True, exist_ok=True)
         (certs_dir / "cert.pem").write_text(cert_pem.strip(), encoding="utf-8")
         (certs_dir / "key.pem").write_text(key_pem.strip(), encoding="utf-8")
@@ -471,10 +741,11 @@ def configurar_nginx_https(
         # Cert de confiança -> HSTS ativo.
         (config_dir / "nginx.conf").write_text(_config_https(com_hsts=True), encoding="utf-8")
         _sinalizar_reload(config_dir)
-        hostname = urlparse(app_url).hostname or "servidor"
         return {
             "modo": "custom",
-            "aviso": f"Certificado instalado com sucesso. Aceda agora via https://{hostname}",
+            "aviso": " ".join(
+                [f"Certificado instalado com sucesso. Aceda agora via https://{hostname}", *avisos]
+            ),
         }
 
     else:
@@ -501,6 +772,12 @@ def aplicar_tls_inicial() -> None:
     if settings.DEPLOYMENT_MODE != "onprem":
         return
     if _TLS_INIT_MARKER.exists():
+        # Já inicializado — mas se o TEMPLATE evoluiu desde que a config foi
+        # gerada (carimbo antigo), regenerá-la preservando o modo em vigor.
+        try:
+            _atualizar_config_gerada()
+        except Exception as exc:  # noqa: BLE001 — nunca impedir o arranque
+            logger.warning("Atualização da config nginx gerada falhou: %s", exc)
         return
 
     modo = (getattr(settings, "TLS_MODE", "self-signed") or "self-signed").strip().lower()
@@ -544,6 +821,31 @@ def aplicar_tls_inicial() -> None:
         _TLS_INIT_MARKER.write_text(modo + "\n", encoding="utf-8")
     except OSError:
         pass
+
+
+def _atualizar_config_gerada() -> None:
+    """Regenera uma nginx.conf gerada por uma versão anterior deste template
+    (ex.: sem a location dos backups), preservando o modo TLS em vigor e os
+    certificados. Configs que não sejam nossas nunca são tocadas."""
+    conf = NGINX_CONFIG_DIR / "nginx.conf"
+    if not conf.is_file():
+        return
+    atual = conf.read_text(encoding="utf-8", errors="replace")
+    if "Gerado automaticamente" not in atual or _CONFIG_STAMP in atual:
+        return
+    # O modo em vigor deteta-se pelo cabeçalho da própria config (o marcador
+    # de inicialização pode estar desatualizado se o wizard mudou o modo).
+    if "Nginx config (HTTPS)" in atual:
+        nova = _config_https(com_hsts="Strict-Transport-Security" in atual)
+    elif "proxy / TLS a montante" in atual:
+        nova = _NGINX_PROXY
+    elif "Nginx config (HTTP)" in atual:
+        nova = _NGINX_HTTP
+    else:
+        return
+    conf.write_text(nova, encoding="utf-8")
+    _sinalizar_reload(NGINX_CONFIG_DIR)
+    logger.info("nginx.conf regenerada para o template atual %s.", _CONFIG_STAMP)
 
 
 def _sinalizar_reload(config_dir: Path) -> None:

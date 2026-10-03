@@ -35,7 +35,9 @@ class QuestionarioRespostasOut(BaseModel):
 class PlanoItemOut(BaseModel):
     """Item mínimo do roadmap usado no dashboard."""
 
-    posicao: int
+    # Ordem dentro desta lista (1, 2, 3…), não a posição na fila completa: os
+    # controlos já feitos saem do meio e as posições da fila viriam com buracos.
+    ordem: int
     control_id: uuid.UUID
     codigo: str
     titulo: str
@@ -44,6 +46,11 @@ class PlanoItemOut(BaseModel):
     dominio_nome: str
     mapeado_questionario: bool
     estado: str
+    # Nível de maturidade alcançado e nível exigido pelo perfil da empresa. É a
+    # medida que decide se o controlo está pendente — o `estado` diz apenas o que
+    # foi declarado, e os dois podem discordar.
+    nivel_atual: int
+    nivel_alvo: int
 
     model_config = {"from_attributes": True}
 

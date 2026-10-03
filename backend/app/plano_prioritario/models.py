@@ -6,9 +6,8 @@ PlanoItem: cada linha do roadmap gerado (controlo ordenado por prioridade).
 """
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
 
-from sqlalchemy import Column, JSON
+from sqlalchemy import Column, JSON, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -39,6 +38,13 @@ class PlanoItem(SQLModel, table=True):
     """
 
     __tablename__ = "plano_itens"  # type: ignore[assignment]
+
+    # O plano é gerado à primeira leitura de quem ainda não o tem. Dois pedidos
+    # em paralelo veem os dois que ele não existe e geram-no os dois — sem esta
+    # restrição o resultado seriam controlos repetidos na fila, em silêncio.
+    __table_args__ = (
+        UniqueConstraint("empresa_id", "control_id", name="uq_plano_empresa_control"),
+    )
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True, index=True)
     empresa_id: uuid.UUID = Field(foreign_key="empresas.id", index=True)

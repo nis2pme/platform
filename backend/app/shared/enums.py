@@ -9,3 +9,6 @@ class EstadoControlo(str, Enum):
     IMPLEMENTADO = "implementado"
     APROVADO = "aprovado"
     NAO_APROVADO = "nao_aprovado"
+    # Excluído do âmbito (scoping): não conta para scores nem pendências.
+    # Exige justificação, fica visível e contestável pelo auditor.
+    NAO_APLICAVEL = "nao_aplicavel"

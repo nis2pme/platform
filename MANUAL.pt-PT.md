@@ -3,7 +3,7 @@
 [English](MANUAL.md) · **[Português 🇵🇹](MANUAL.pt-PT.md)**
 
 > Versão: On-Prem (imagens GHCR)
-> Data: 2026-06-12
+> Data: 2026-10-01
 
 ---
 
@@ -67,7 +67,7 @@ Por defeito, o script instala numa pasta `./nis2pme`. Para escolher outra:
 NIS2PME_DIR=/opt/nis2pme sh start_nis2pme.sh
 ```
 
-> **O one-liner corre sem perguntas.** Ao ser enviado para o `bash` não tem terminal, por isso usa defaults: o menu de idioma é saltado (**Português**) e é gerado um **certificado temporário self-signed**. Para escolheres o idioma e o modo TLS (ver [Passo 4](#passo-4--segurança-da-ligação-https)), descarrega e corre antes (`sh start_nis2pme.sh`). O certificado também pode ser definido ou substituído mais tarde no assistente de configuração.
+> **O one-liner corre sem perguntas.** Ao ser enviado para o `bash` não tem terminal, por isso usa defaults: o menu de idioma é saltado (**Português**) e é gerado um **certificado temporário self-signed**. Para escolheres o idioma e o modo TLS (ver [Passo 4](#passo-4--segurança-da-ligação-https)), descarrega e corre antes (`sh start_nis2pme.sh`). O certificado também pode ser definido ou substituído no assistente de primeira configuração.
 
 ### Opção B — Docker Compose manual
 
@@ -96,7 +96,7 @@ docker compose ps
 docker compose logs -f
 ```
 
-> O backend faz as migrações da base de dados no arranque, pelo que a primeira inicialização pode demorar até 1–2 minutos.
+> O backend faz as migrações da base de dados no arranque, pelo que a primeira inicialização pode demorar alguns minutos.
 
 ---
 
@@ -135,8 +135,8 @@ Após o sistema arrancar, abre o browser no endereço indicado (ex: `https://192
 O **assistente de configuração** guia-te em 5 passos:
 
 ### Passo 1 — Dados da empresa
-- Nome, sector de actividade, dimensão (micro/pequena/média)
-- O sistema determina automaticamente o nível de conformidade exigido (entidade importante ou essencial)
+- Nome, sector de actividade, dimensão (micro/pequena/média/grande), classificação NIS2 (importante/essencial) e nível de conformidade QNRCS (Básico/Substancial/Elevado) — és tu que os escolhes
+- O assistente pré-preenche a classificação a partir do sector e o nível a partir da classificação; ambos podem ser ajustados
 
 ### Passo 2 — Conta de administrador
 - Nome, email e password do utilizador administrador principal
@@ -207,11 +207,14 @@ SMTP_PASSWORD=password_do_email
 SMTP_FROM_EMAIL=noreply@empresa.pt
 SMTP_FROM_NAME=NIS2PME
 SMTP_TLS=true
+# SMTP_SSL=true                     # TLS implícito (porta 465); exclui-se com SMTP_TLS
 ```
+
+> Outras variáveis opcionais (notificações por email, retenção da trilha, interface de escuta e IP de confiança do proxy) estão documentadas e comentadas no [`.env.example`](.env.example).
 
 ### Fixar uma versão das imagens
 
-Por defeito o compose usa a tag `:latest`. Para fixar uma versão específica, edita o `docker-compose.yml` e substitui, por exemplo, `ghcr.io/nis2pme/backend:latest` por `ghcr.io/nis2pme/backend:0.2`.
+Por defeito o compose usa a tag `:latest`. Para fixar uma versão específica, edita o `docker-compose.yml` e substitui, por exemplo, `ghcr.io/nis2pme/backend:latest` por `ghcr.io/nis2pme/backend:0.4.0`. O instalador também aceita `NIS2PME_VERSION=v0.4.0`, que fixa o compose publicado e o confere contra o checksum publicado.
 
 ### Volumes Docker (persistência de dados)
 
@@ -264,30 +267,45 @@ sh start_nis2pme.sh
 
 > As migrações de base de dados são aplicadas automaticamente no arranque (`alembic upgrade head`).
 
-### Backup manual da base de dados
+### Backups embutidos (recomendado)
+
+A app tem um sistema de backups próprio em **Definições → Sistema**: define uma
+frase-secreta (obrigatória — sem ela não há backups) e a partir daí é criado um
+backup **diário automático** (03:00, configurável); também podes criar um manual
+a qualquer momento, em modo completo ou só base de dados. Cada ficheiro `.nbk` é
+**cifrado** e, em modo completo, contém tudo: base de dados, evidências, dados
+premium (se existirem), secrets e `.env`.
+
+> **A frase-secreta e uma cópia dos backups devem viver FORA deste servidor**
+> (ex.: cofre de palavras-passe + descarregar o `.nbk` para outra máquina).
+> Sem a frase-secreta, o backup é irrecuperável.
+
+### Restaurar um backup
 
 ```bash
-# Criar backup
-docker exec nis2pme_db pg_dump -U nis2pme nis2pme > backup_$(date +%Y%m%d).sql
+# 1. Inspecionar o conteúdo (não altera nada; pede a frase-secreta)
+sh restaurar_backup.sh nis2pme-backup-20260715-030000.nbk
 
-# Restaurar (parar o sistema primeiro)
-docker compose down
-docker compose up -d db
-docker exec -i nis2pme_db psql -U nis2pme nis2pme < backup_20260612.sql
-docker compose up -d
+# 2. Executar mesmo (cria backup de segurança, pára a API, restaura e reinicia)
+sh restaurar_backup.sh nis2pme-backup-20260715-030000.nbk --confirmo
 ```
 
-### Backup dos volumes (evidências + secrets)
+O primeiro argumento pode ser um backup guardado no servidor ou um ficheiro
+`.nbk` local (ex.: descarregado da UI). O restauro é protegido: cifra
+autenticada, verificação de versões/migrações (um backup de uma versão mais
+recente da app é recusado), backup de segurança automático do estado atual,
+modo manutenção, e no fim o backend reinicia e aplica as migrações sozinho.
+O relatório final fica em `data/restauro-relatorio.json` (dentro do volume) e
+no registo de auditoria.
 
-```bash
-# Evidências
-docker run --rm -v nis2pme_uploads:/data -v $(pwd):/backup alpine \
-    tar czf /backup/uploads_backup_$(date +%Y%m%d).tar.gz -C /data .
+Flags úteis: `--sem-premium` (ignorar os dados premium do backup),
+`--maquina-nova` (primeira reposição num servidor novo — aplica também o `.env`
+do backup, preservando as passwords de base de dados geradas nesta máquina).
 
-# Secrets (crítico — sem este backup não consegues restaurar cifras)
-docker run --rm -v nis2pme_data:/data -v $(pwd):/backup alpine \
-    tar czf /backup/secrets_backup_$(date +%Y%m%d).tar.gz -C /data .
-```
+> Num servidor novo: instala normalmente com o `start_nis2pme.sh` (cria o `.env`;
+> a app gera os secrets no primeiro arranque), copia o `.nbk` para a pasta do
+> compose e corre o restauro com `--maquina-nova`.
+> Se a licença premium usar ativação anti-clone, pode ser preciso reativá-la.
 
 ---
 
@@ -344,7 +362,7 @@ Corra-o **na máquina onde o NIS2PME está instalado** — não é preciso login
 
 - **Redefinir a password**, **desativar o 2FA (MFA)**, ou **ambos**.
 - **Lista as contas de administrador e subadministrador**, deixa escolher qual, e pede para **confirmar escrevendo o email desse utilizador** antes de alterar seja o que for.
-- A nova password segue as regras padrão da plataforma: **pelo menos 8 caracteres**, com maiúsculas, minúsculas, um dígito e um caráter especial.
+- A nova password segue as regras padrão da plataforma: **pelo menos 12 caracteres**, com uma letra maiúscula, um dígito e um caráter especial.
 - Redefinir a password **revoga automaticamente todas as sessões ativas**.
 
 > As flags `-it` são obrigatórias (perguntas interativas). No fim, inicie sessão com a nova password e reative o 2FA nas definições de conta, se o tiver desativado.

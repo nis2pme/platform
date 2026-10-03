@@ -33,10 +33,13 @@ class RelatorioControloSchema(BaseModel):
     obrigatorio_perfil: bool           # True se obrigatório para o perfil da empresa
     implementador_nome: str | None    # nome do implementador delegado
     data_aprovacao: datetime | None
+    # Justificação da exclusão de âmbito (estado nao_aplicavel) — visível ao
+    # auditor: a exclusão é contestável.
+    na_justificacao: str | None = None
 
 
 class RelatorioDominioSchema(BaseModel):
-    """Agregado de controlos por domínio, com score."""
+    """Agregado de controlos por objetivo, com score."""
 
     dominio_id: uuid.UUID
     codigo: str
@@ -51,8 +54,8 @@ class RelatorioDominioSchema(BaseModel):
 
 class RelatorioConformidadeSchema(BaseModel):
     """
-    Relatório completo de conformidade NIS2/DL 125/2025.
-    Inclui todos os domínios e controlos, com score global.
+    Relatório completo de conformidade NIS2.
+    Inclui todos os objetivos e controlos, com score global.
     """
 
     # Metadados do relatório
@@ -224,6 +227,11 @@ class ExportacaoDadosSchema(BaseModel):
     utilizadores: list[ExportacaoUtilizadorSchema]
     estado_controlos: list[dict]      # snapshot de controlos_empresa simplificado
     historico_maturidade: list[dict]  # snapshots históricos
+    # Referências (identificação, datas, estado, quem) — nunca o conteúdo.
+    incidentes: list[dict] = []
+    tarefas: list[dict] = []
+    formacoes: list[dict] = []        # com os participantes (nome, órgão de gestão, presença)
+    evidencias: list[dict] = []       # metadados; os ficheiros descarregam-se individualmente
 
 
 # ---------------------------------------------------------------------------

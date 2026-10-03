@@ -16,12 +16,26 @@ import string
 
 from fastapi import HTTPException, Request, status
 from sqlalchemy import func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from app.auth.models import CodigoBackup2FA, RoleUtilizador, TokenRefresh, Utilizador
-from app.auth.service import hash_password, verify_password as verificar_password
+from app.auth.models import (
+    CodigoBackup2FA,
+    RoleUtilizador,
+    Utilizador,
+    registar_adesao,
+)
+from app.auth.service import (
+    hash_password,
+    terminar_sessoes,
+    verify_password as verificar_password,
+)
+from app.controlos.models import RelatorioAuditoria
+from app.formacao.models import ParticipanteFormacao
 from app.shared.audit import Acao, ResultadoAcao, registar_acao
 from app.shared.pii import cifrar_pii, decifrar_pii
+from app.shared.politica_seguranca import exigir_password_valida, password_min
+from app.shared.utils import validar_forca_password
 from app.utilizadores.schemas import (
     AlterarPasswordSchema,
     AlterarRoleSchema,
@@ -29,8 +43,14 @@ from app.utilizadores.schemas import (
     CriarUtilizadorSchema,
     ImplementadorSchema,
     ListaUtilizadoresSchema,
+    MembroEquipaSchema,
     UtilizadorSchema,
 )
+
+
+# Nome que substitui o real numa conta anonimizada. É dado, não texto de
+# interface: o ecrã pode traduzi-lo a partir de `anonimizado_at`.
+NOME_ANONIMIZADO = "Utilizador Anonimizado"
 
 
 # ---------------------------------------------------------------------------
@@ -63,6 +83,7 @@ def _get_utilizador_ou_404(
 def _verificar_permissao_gestao(
     utilizador_atual: Utilizador,
     alvo: Utilizador,
+    request: Request | None = None,
 ) -> None:
     """
     Verifica se o utilizador_atual pode gerir o utilizador alvo.
@@ -72,38 +93,71 @@ def _verificar_permissao_gestao(
       - Nenhum utilizador pode gerir utilizadores de outro tenant.
     """
     if utilizador_atual.empresa_id != alvo.empresa_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Sem permissão.",
-        )
+        _recusar_gestao(utilizador_atual, "Sem permissão.", request)
     roles_gestores = (RoleUtilizador.ADMIN, RoleUtilizador.SUBADMIN)
     if utilizador_atual.role not in roles_gestores and utilizador_atual.id != alvo.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Apenas admins podem gerir outros utilizadores.",
-        )
+        _recusar_gestao(utilizador_atual, "Apenas admins podem gerir outros utilizadores.", request)
+
+
+def _recusar_gestao(
+    atual: Utilizador,
+    detalhe: str,
+    request: Request | None,
+    codigo: str = "sem_permissao",
+) -> None:
+    """Deixa o rasto da recusa na trilha e levanta o 403.
+
+    Toda a recusa da gestão de contas passa por aqui: uma varredura por conta que
+    tenta tomar contas acima dela é o sinal que se quer poder ver, e uma linha
+    verde não o mostra.
+    """
+    from app.shared.audit import registar_negacao
+
+    registar_negacao(atual, modulo="utilizadores", acao="operar", codigo=codigo, request=request)
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detalhe)
+
+
+def _exigir_pode_gerir_papel(
+    atual: Utilizador,
+    papel_alvo: RoleUtilizador,
+    request: Request | None = None,
+) -> None:
+    """O ator só cria, promove, repõe ou desativa contas cujo papel esteja contido
+    no seu — senão a gestão de contas era um caminho de escalada.
+
+    O administrador é a exceção: gere qualquer papel, incluindo o do auditor, cuja
+    validação independente (`aprovar`) por desenho nem ele detém.
+    """
+    if atual.role == RoleUtilizador.ADMIN:
+        return
+    from app.shared.capacidades import papel_contido_em
+
+    if not papel_contido_em(atual.empresa_id, papel_alvo, atual.role):
+        _recusar_gestao(atual, "Sem permissão para gerir uma conta com este perfil.", request)
 
 
 def _verificar_hierarquia_roles(
     atual: Utilizador,
     alvo: Utilizador,
+    request: Request | None = None,
 ) -> None:
     """
-    Verifica se o utilizador atual tem hierarquia suficiente para realizar
-    operações destrutivas sobre o alvo (alterar role, desativar, reset, etc.).
+    Verifica se o utilizador atual pode agir sobre a conta `alvo` (alterar role,
+    desativar, repor, anonimizar).
 
-    Regras:
-      - Ninguém pode operar sobre um Admin de outra forma que não seja o próprio Admin.
-      - SubAdmin não pode operar sobre Admin nem sobre outro SubAdmin.
+    Duas camadas:
+      - a hierarquia de gestão: ninguém gere um Admin exceto o próprio Admin, e um
+        SubAdmin não gere outro SubAdmin (pares não se gerem entre si);
+      - a contenção de capacidades: o papel do alvo tem de caber no do ator, para a
+        gestão de contas não ser um caminho de escalada (o auditor e um CEO com
+        governação reservada deixam de ser alcançáveis por quem não os contém).
     """
     roles_protegidos: list[RoleUtilizador] = [RoleUtilizador.ADMIN]
     if atual.role == RoleUtilizador.SUBADMIN:
         roles_protegidos.append(RoleUtilizador.SUBADMIN)
     if alvo.role in roles_protegidos:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Sem permissão para gerir este utilizador.",
-        )
+        _recusar_gestao(atual, "Sem permissão para gerir este utilizador.", request)
+    _exigir_pode_gerir_papel(atual, alvo.role, request)
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +277,29 @@ def listar_implementadores(
     return [ImplementadorSchema.model_validate(u) for u in implementadores]
 
 
+def listar_equipa(
+    db: Session,
+    empresa_id: uuid.UUID,
+) -> list[MembroEquipaSchema]:
+    """
+    Pessoas ativas da empresa, de todos os papéis, para os seletores dos módulos.
+
+    Distinta de `listar_implementadores`: aquela serve a delegação de controlos e
+    por isso só devolve implementadores. Módulos como a Formação precisam de poder
+    escolher qualquer pessoa — incluindo o órgão de gestão, que é justamente quem
+    a formação obrigatória visa.
+    """
+    membros = db.exec(
+        select(Utilizador).where(
+            Utilizador.empresa_id == empresa_id,
+            Utilizador.ativo.is_(True),  # type: ignore[attr-defined]
+            Utilizador.deleted_at.is_(None),  # type: ignore[attr-defined]
+        )
+    ).all()
+    schemas = [MembroEquipaSchema.model_validate(u) for u in membros]
+    return sorted(schemas, key=lambda m: m.nome.casefold())
+
+
 # ---------------------------------------------------------------------------
 # CRUD individual
 # ---------------------------------------------------------------------------
@@ -244,6 +321,24 @@ def get_utilizador(
     return UtilizadorSchema.model_validate(alvo)
 
 
+class EmailJaRegistado(HTTPException):
+    """O email já pertence a alguém.
+
+    Existe como classe própria para os DOIS caminhos que chegam aqui darem
+    exatamente a mesma resposta: a consulta prévia (o caso sequencial) e a
+    restrição única da base (o caso em que dois pedidos chegam ao mesmo tempo).
+    Se as respostas divergissem, o cliente conseguiria distinguir «este email já
+    existia» de «este email foi criado no mesmo instante» — e isso é um oráculo
+    sobre atividade alheia que não tem razão nenhuma para existir.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Este email já está registado.",
+        )
+
+
 def criar_utilizador(
     db: Session,
     dados: CriarUtilizadorSchema,
@@ -254,27 +349,36 @@ def criar_utilizador(
     """
     Admin ou SubAdmin cria um novo utilizador na empresa.
     - Admin não pode criar outro admin (restrição no schema).
-    - SubAdmin não pode criar admin nem subadmin (restrição no service).
+    - SubAdmin não pode criar admin nem subadmin (pares/superiores).
+    - Ninguém cria uma conta cujo papel faça mais do que o próprio (contenção).
     """
-    # SubAdmin não pode criar Admin ou SubAdmin
+    # SubAdmin não pode criar Admin ou SubAdmin (hierarquia de gestão).
     if criador.role == RoleUtilizador.SUBADMIN and dados.role in (
         RoleUtilizador.ADMIN,
         RoleUtilizador.SUBADMIN,
     ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Sub-administradores não podem criar utilizadores com este perfil.",
+        _recusar_gestao(
+            criador,
+            "Sub-administradores não podem criar utilizadores com este perfil.",
+            request,
         )
+    # E não cria um papel cujas capacidades não estejam contidas nas suas (um
+    # subadministrador não abre uma conta de auditor, nem de um CEO a quem a empresa
+    # reservou uma decisão de gestão que ele não tem).
+    _exigir_pode_gerir_papel(criador, dados.role, request)
 
-    # Verifica email único (global — emails são únicos na plataforma)
+    # Verifica email único (global — emails são únicos na plataforma).
+    #
+    # Esta consulta é conforto, não garantia: entre ela e a escrita cabe outro
+    # pedido. Quem garante a unicidade é a restrição da base de dados, e é por
+    # isso que a falha dela é tratada logo a seguir em vez de subir como erro.
     existente = db.exec(
         select(Utilizador).where(Utilizador.email == dados.email)
     ).first()
     if existente:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Este email já está registado.",
-        )
+        raise EmailJaRegistado()
+
+    exigir_password_valida(dados.password, db=db, empresa_id=empresa_id)
 
     novo = Utilizador(
         empresa_id=empresa_id,
@@ -285,7 +389,25 @@ def criar_utilizador(
         ativo=True,
     )
     db.add(novo)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        # Dois pedidos com o mesmo email ao mesmo tempo: ambos passaram a
+        # consulta acima e só um sobrevive à restrição única. Perder essa corrida
+        # é um desfecho PREVISTO, não uma avaria — quem perde tem de receber a
+        # mesma recusa que receberia em sequência. Sem isto, a resposta era 500:
+        # dizia ao cliente que a culpa foi do servidor e deixava um traceback nos
+        # registos por uma situação perfeitamente normal.
+        #
+        # O rollback é obrigatório: depois de uma IntegrityError a sessão fica
+        # inutilizável, e qualquer operação seguinte falharia por arrasto.
+        db.rollback()
+        raise EmailJaRegistado()
+
+    # Adesão à empresa. É o caminho mais usado dos três que criam
+    # utilizadores — sem ele a tabela ficaria a conhecer só quem existia antes
+    # da migração.
+    registar_adesao(db, novo, criado_por_id=criador.id)
 
     registar_acao(
         db,
@@ -318,7 +440,14 @@ def atualizar_perfil(
     Utilizador pode atualizar o próprio nome.
     """
     alvo = _get_utilizador_ou_404(db, utilizador_id, empresa_id)
-    _verificar_permissao_gestao(utilizador_atual, alvo)
+    _verificar_permissao_gestao(utilizador_atual, alvo, request)
+
+    # Gerir a conta de OUTRA pessoa (o nome, o papel ou o estado) exige a
+    # hierarquia e a contenção — senão um subadministrador editava o nome do
+    # administrador, que a permissão de gestão acima, por si só, deixava passar.
+    # Editar o próprio perfil não passa por aqui.
+    if alvo.id != utilizador_atual.id:
+        _verificar_hierarquia_roles(utilizador_atual, alvo, request)
 
     from app.shared.pii import decifrar_pii
 
@@ -339,48 +468,39 @@ def atualizar_perfil(
 
     if dados.role is not None and dados.role != alvo.role:
         if utilizador_atual.role not in (RoleUtilizador.ADMIN, RoleUtilizador.SUBADMIN):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Apenas administradores podem alterar o papel.",
-            )
+            _recusar_gestao(utilizador_atual, "Apenas administradores podem alterar o papel.", request)
         if dados.role == RoleUtilizador.ADMIN:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Não é possível promover um utilizador a admin por este endpoint.",
+            _recusar_gestao(
+                utilizador_atual,
+                "Não é possível promover um utilizador a admin por este endpoint.",
+                request,
             )
         # SubAdmin não pode promover para SubAdmin
         if utilizador_atual.role == RoleUtilizador.SUBADMIN and dados.role == RoleUtilizador.SUBADMIN:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Sub-administradores não podem atribuir este perfil.",
-            )
-        # Verifica hierarquia sobre o alvo
-        _verificar_hierarquia_roles(utilizador_atual, alvo)
+            _recusar_gestao(utilizador_atual, "Sub-administradores não podem atribuir este perfil.", request)
+        # O papel do alvo já foi conferido acima (é outra pessoa); falta o papel
+        # NOVO caber no do ator, senão promovia alguém para além de si.
+        _exigir_pode_gerir_papel(utilizador_atual, dados.role, request)
         if alvo.id == utilizador_atual.id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Não pode alterar o seu próprio role.",
-            )
+            _recusar_gestao(utilizador_atual, "Não pode alterar o seu próprio role.", request)
         role_anterior = alvo.role
         alvo.role = dados.role
         houve_alteracao_role = True
 
     if dados.ativo is not None and dados.ativo != alvo.ativo:
         if utilizador_atual.role not in (RoleUtilizador.ADMIN, RoleUtilizador.SUBADMIN):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Apenas administradores podem alterar o estado da conta.",
-            )
+            _recusar_gestao(utilizador_atual, "Apenas administradores podem alterar o estado da conta.", request)
         if alvo.id == utilizador_atual.id and not dados.ativo:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Não pode desativar a sua própria conta.",
-            )
-        # Verifica hierarquia
-        _verificar_hierarquia_roles(utilizador_atual, alvo)
+            _recusar_gestao(utilizador_atual, "Não pode desativar a sua própria conta.", request)
+        # A hierarquia e a contenção sobre o alvo já foram conferidas no topo.
         ativo_anterior = alvo.ativo
         alvo.ativo = dados.ativo
         houve_alteracao_estado = True
+        if not dados.ativo:
+            # Como em `desativar_utilizador`: sem isto, ao reativar a conta as
+            # sessões antigas (também as de quem as tivesse roubado) voltavam a
+            # renovar-se.
+            terminar_sessoes(db, alvo.id)
 
     if not (
         houve_alteracao_nome
@@ -393,9 +513,12 @@ def atualizar_perfil(
     db.add(alvo)
 
     if houve_alteracao_nome:
+        # Isto é uma alteração ao utilizador, não à empresa. As linhas gravadas
+        # antes desta correção mantêm o código antigo — a trilha não se
+        # reescreve — e são reconhecidas na leitura pela entidade afetada.
         registar_acao(
             db,
-            acao=Acao.EMPRESA_DADOS_ATUALIZADOS,
+            acao=Acao.UTILIZADOR_NOME_ALTERADO,
             resultado=ResultadoAcao.SUCESSO,
             empresa_id=empresa_id,
             utilizador_id=utilizador_atual.id,
@@ -464,23 +587,21 @@ def alterar_role(
 
     # Impede operação sobre si próprio
     if alvo.id == admin.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Não pode alterar o seu próprio role.",
-        )
+        _recusar_gestao(admin, "Não pode alterar o seu próprio role.", request)
 
-    # Verifica hierarquia: Admin não gere Admin; SubAdmin não gere Admin/SubAdmin
-    _verificar_hierarquia_roles(admin, alvo)
+    # Verifica hierarquia e contenção sobre o papel ATUAL do alvo
+    _verificar_hierarquia_roles(admin, alvo, request)
 
-    # SubAdmin não pode promover para Admin ou SubAdmin
+    # SubAdmin não pode promover para Admin ou SubAdmin (hierarquia de gestão)
     if admin.role == RoleUtilizador.SUBADMIN and dados.novo_role in (
         RoleUtilizador.ADMIN,
         RoleUtilizador.SUBADMIN,
     ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Sub-administradores não podem atribuir este perfil.",
-        )
+        _recusar_gestao(admin, "Sub-administradores não podem atribuir este perfil.", request)
+
+    # E o papel NOVO também tem de estar contido no do ator (não se promove
+    # ninguém para além de si).
+    _exigir_pode_gerir_papel(admin, dados.novo_role, request)
 
     role_anterior = alvo.role
     alvo.role = dados.novo_role
@@ -519,13 +640,10 @@ def desativar_utilizador(
     alvo = _get_utilizador_ou_404(db, utilizador_id, empresa_id)
 
     if alvo.id == admin.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Não pode desativar a sua própria conta.",
-        )
+        _recusar_gestao(admin, "Não pode desativar a sua própria conta.", request)
 
     # Verifica hierarquia: Admin não gere Admin; SubAdmin não gere Admin/SubAdmin
-    _verificar_hierarquia_roles(admin, alvo)
+    _verificar_hierarquia_roles(admin, alvo, request)
 
     if not alvo.ativo:
         raise HTTPException(
@@ -537,17 +655,8 @@ def desativar_utilizador(
     alvo.updated_at = datetime.now(timezone.utc)
     db.add(alvo)
 
-    # Revogar todos os refresh tokens ativos do utilizador desativado
-    tokens_ativos = db.exec(
-        select(TokenRefresh).where(
-            TokenRefresh.utilizador_id == alvo.id,
-            TokenRefresh.revogado_at.is_(None),  # type: ignore[union-attr]
-        )
-    ).all()
-    agora = datetime.now(timezone.utc)
-    for token in tokens_ativos:
-        token.revogado_at = agora
-        db.add(token)
+    # Terminar as sessões e os pedidos de recuperação do utilizador desativado.
+    terminar_sessoes(db, alvo.id)
 
     registar_acao(
         db,
@@ -580,7 +689,7 @@ def reativar_utilizador(
     alvo = _get_utilizador_ou_404(db, utilizador_id, empresa_id)
 
     # Verifica hierarquia: Admin não gere Admin; SubAdmin não gere Admin/SubAdmin
-    _verificar_hierarquia_roles(admin, alvo)
+    _verificar_hierarquia_roles(admin, alvo, request)
 
     if alvo.ativo:
         raise HTTPException(
@@ -626,10 +735,14 @@ def alterar_password(
     dados: AlterarPasswordSchema,
     utilizador_atual: Utilizador,
     request: Request | None = None,
-) -> None:
+) -> int:
     """
     Utilizador altera a sua própria password.
     Requer a password atual para confirmação.
+
+    Termina todas as sessões da conta — quem a roubou não continua a renovar a
+    sessão depois de o dono mudar a password. Quem mudou recebe uma sessão nova
+    (no router). Devolve quantas sessões terminou.
     """
     # Verifica password atual
     if not verificar_password(dados.password_atual, utilizador_atual.password_hash):
@@ -647,6 +760,8 @@ def alterar_password(
             detail="Password atual incorreta.",
         )
 
+    exigir_password_valida(dados.nova_password, db=db, empresa_id=utilizador_atual.empresa_id)
+
     # Garante que a nova password é diferente da atual
     if verificar_password(dados.nova_password, utilizador_atual.password_hash):
         raise HTTPException(
@@ -655,8 +770,12 @@ def alterar_password(
         )
 
     utilizador_atual.password_hash = hash_password(dados.nova_password)
+    # Se havia uma password temporária (um reset do administrador), a pessoa
+    # acabou de escolher a sua.
+    utilizador_atual.password_temporaria_ativa = False
     utilizador_atual.updated_at = datetime.now(timezone.utc)
     db.add(utilizador_atual)
+    terminadas = terminar_sessoes(db, utilizador_atual.id)
 
     registar_acao(
         db,
@@ -664,8 +783,10 @@ def alterar_password(
         resultado=ResultadoAcao.SUCESSO,
         empresa_id=utilizador_atual.empresa_id,
         utilizador_id=utilizador_atual.id,
+        dados_novos={"sessoes_terminadas": terminadas},
         request=request,
     )
+    return terminadas
 
 
 # ---------------------------------------------------------------------------
@@ -690,6 +811,8 @@ def anonimizar_utilizador(
       - password_hash → string inválida (conta não pode fazer login)
       - totp_secret_cifrado → None
       - consentimento_termos_* → None
+      - o nome nas cópias do sidecar premium (antes de tudo o resto; se o
+        sidecar estiver configurado e não responder, 503 e nada muda)
 
     O que é MANTIDO (base legal Art. 17(3)(b) RGPD):
       - id (UUID — necessário para referências de AuditLog)
@@ -701,13 +824,10 @@ def anonimizar_utilizador(
     alvo = _get_utilizador_ou_404(db, utilizador_id, empresa_id)
 
     if alvo.id == admin.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Não pode anonimizar a sua própria conta.",
-        )
+        _recusar_gestao(admin, "Não pode anonimizar a sua própria conta.", request)
 
     # Verifica hierarquia: Admin não gere Admin; SubAdmin não gere Admin/SubAdmin
-    _verificar_hierarquia_roles(admin, alvo)
+    _verificar_hierarquia_roles(admin, alvo, request)
 
     if alvo.anonimizado_at is not None:
         raise HTTPException(
@@ -715,11 +835,31 @@ def anonimizar_utilizador(
             detail="Utilizador já foi anonimizado.",
         )
 
+    # O sidecar premium guarda cópias do nome (responsáveis, donos, avaliadores,
+    # quem decidiu). Vai primeiro: se não responder, nada muda aqui — senão a
+    # conta ficava anonimizada e o nome continuava nessas linhas, sem ninguém
+    # saber. Repetir é seguro (a troca é idempotente).
+    from app.premium.anonimizacao_client import SidecarIndisponivel, anonimizar_pessoa
+    from app.shared.i18n import MsgsI18n, locale_de_request, traduzir
+
+    try:
+        anonimizar_pessoa(str(alvo.empresa_id), str(alvo.id), nome_substituto=NOME_ANONIMIZADO)
+    except SidecarIndisponivel:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=traduzir(MsgsI18n.ANONIMIZACAO_PREMIUM_INDISPONIVEL, locale_de_request(request)),
+        )
+
     agora = datetime.now(timezone.utc)
 
-    # Desativa e anonimiza dados pessoais
+    # Desativa e anonimiza dados pessoais.
+    #
+    # O nome vai CIFRADO, como qualquer outro nome: a coluna é lida por
+    # `decifrar_pii` em todos os ecrãs, e um texto em claro não decifra — a
+    # listagem da empresa inteira passava a responder 500 depois de anonimizar
+    # uma única pessoa.
     alvo.email = f"{alvo.id}@anonimizado.invalid"
-    alvo.nome = "Utilizador Anonimizado"
+    alvo.nome = cifrar_pii(NOME_ANONIMIZADO)
     alvo.password_hash = "ANONIMIZADO"  # login impossível
     alvo.totp_secret_cifrado = None
     alvo.totp_ativo = False
@@ -731,6 +871,28 @@ def anonimizar_utilizador(
     alvo.updated_at = agora
 
     db.add(alvo)
+
+    # Cópias desnormalizadas do nome, guardadas noutras tabelas para poupar
+    # joins. Anonimizar a conta e deixar o nome nelas seria cumprir o pedido
+    # só na tabela em que ninguém o vê.
+    for relatorio in db.exec(
+        select(RelatorioAuditoria).where(RelatorioAuditoria.auditor_id == alvo.id)
+    ).all():
+        relatorio.auditor_nome = cifrar_pii(NOME_ANONIMIZADO)
+        db.add(relatorio)
+    for participante in db.exec(
+        select(ParticipanteFormacao).where(ParticipanteFormacao.utilizador_id == alvo.id)
+    ).all():
+        participante.nome = cifrar_pii(NOME_ANONIMIZADO)
+        db.add(participante)
+
+    # Uma conta anonimizada não pode continuar com sessões vivas: o refresh
+    # renovaria o acesso de alguém que, para a aplicação, deixou de existir.
+    terminar_sessoes(db, alvo.id)
+    for codigo in db.exec(
+        select(CodigoBackup2FA).where(CodigoBackup2FA.utilizador_id == alvo.id)
+    ).all():
+        db.delete(codigo)
 
     registar_acao(
         db,
@@ -753,36 +915,17 @@ def anonimizar_utilizador(
     }
 
 
-def _gerar_password_temporaria(tamanho: int = 14) -> str:
-    """Gera password temporária forte para reset administrativo."""
-    minusculas = string.ascii_lowercase
-    maiusculas = string.ascii_uppercase
-    numeros = string.digits
-    especiais = "!@#$%&*_-"
-    alfabeto = minusculas + maiusculas + numeros + especiais
+def _gerar_password_temporaria(tamanho: int) -> str:
+    """Gera uma password temporária para o reset administrativo.
 
+    Repete até a regra da plataforma a aceitar: é a mesma função que valida as
+    passwords escolhidas, por isso a temporária nunca fica aquém delas.
+    """
+    alfabeto = string.ascii_letters + string.digits + "!@#$%&*_-"
     while True:
         pwd = "".join(secrets.choice(alfabeto) for _ in range(tamanho))
-        if (
-            any(c in maiusculas for c in pwd)
-            and any(c in numeros for c in pwd)
-            and any(c in especiais for c in pwd)
-        ):
+        if validar_forca_password(pwd, minimo=tamanho)[0]:
             return pwd
-
-
-def _revogar_sessoes_utilizador(db: Session, utilizador_id: uuid.UUID) -> None:
-    """Revoga todas as sessões ativas de um utilizador."""
-    sessoes = db.exec(
-        select(TokenRefresh).where(
-            TokenRefresh.utilizador_id == utilizador_id,
-            TokenRefresh.revogado_at.is_(None),  # type: ignore[union-attr]
-        )
-    ).all()
-    agora = datetime.now(timezone.utc)
-    for sessao in sessoes:
-        sessao.revogado_at = agora
-        db.add(sessao)
 
 
 def resetar_password_admin(
@@ -799,13 +942,10 @@ def resetar_password_admin(
     alvo = _get_utilizador_ou_404(db, utilizador_id, empresa_id)
 
     if alvo.id == admin.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Use o ecrã de perfil para alterar a sua própria password.",
-        )
+        _recusar_gestao(admin, "Use o ecrã de perfil para alterar a sua própria password.", request)
 
     # Verifica hierarquia: Admin não gere Admin; SubAdmin não gere Admin/SubAdmin
-    _verificar_hierarquia_roles(admin, alvo)
+    _verificar_hierarquia_roles(admin, alvo, request)
 
     if not alvo.ativo:
         raise HTTPException(
@@ -813,13 +953,14 @@ def resetar_password_admin(
             detail="Não é possível resetar password de utilizador desativado.",
         )
 
-    password_temporaria = _gerar_password_temporaria()
+    # Nunca abaixo do mínimo da empresa, que pode passar dos 16.
+    password_temporaria = _gerar_password_temporaria(max(16, password_min(db, empresa_id)))
     alvo.password_hash = hash_password(password_temporaria)
     alvo.password_temporaria_ativa = True
     alvo.updated_at = datetime.now(timezone.utc)
     db.add(alvo)
 
-    _revogar_sessoes_utilizador(db, alvo.id)
+    terminar_sessoes(db, alvo.id)
 
     registar_acao(
         db,
@@ -858,13 +999,10 @@ def resetar_mfa_admin(
     alvo = _get_utilizador_ou_404(db, utilizador_id, empresa_id)
 
     if alvo.id == admin.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Use o seu perfil para gerir o seu próprio MFA.",
-        )
+        _recusar_gestao(admin, "Use o seu perfil para gerir o seu próprio MFA.", request)
 
     # Verifica hierarquia: Admin não gere Admin; SubAdmin não gere Admin/SubAdmin
-    _verificar_hierarquia_roles(admin, alvo)
+    _verificar_hierarquia_roles(admin, alvo, request)
 
     alvo.totp_ativo = False
     alvo.totp_secret_cifrado = None
@@ -877,7 +1015,7 @@ def resetar_mfa_admin(
     for codigo in codigos:
         db.delete(codigo)
 
-    _revogar_sessoes_utilizador(db, alvo.id)
+    terminar_sessoes(db, alvo.id)
 
     registar_acao(
         db,
