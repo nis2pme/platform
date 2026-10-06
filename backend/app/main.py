@@ -613,6 +613,25 @@ async def healthcheck():
 # Handler global de erros não tratados
 # ---------------------------------------------------------------------------
 
+def _campo_acima_do_teto(error: dict) -> dict | None:
+    """O campo do pedido que passou do teto, sem nunca devolver o valor enviado.
+
+    Um texto acima do teto (`string_too_long`) diz `{campo, max}` em caracteres;
+    uma lista ou um dicionário com entradas a mais (`too_long`) diz também
+    `unidade: "itens"`. O campo é sempre o de topo do corpo: um texto dentro dos
+    atributos de um ativo é o campo `atributos`, e dentro de uma lista o da lista.
+    """
+    loc = error["loc"]
+    max_length = (error.get("ctx") or {}).get("max_length")
+    if len(loc) < 2 or not isinstance(max_length, int):
+        return None
+    if error["type"] == "string_too_long":
+        return {"campo": str(loc[1]), "max": max_length}
+    if error["type"] == "too_long":
+        return {"campo": str(loc[1]), "max": max_length, "unidade": "itens"}
+    return None
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """
@@ -621,9 +640,16 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     Em vez de [{loc: ..., msg: ..., type: ...}], devolvemos um detalhe limpo.
     """
     erros = []
+    # Os textos e as listas acima do teto vão também por campo, para o ecrã dizer qual encurtar:
+    # o `detail` é uma frase, e dela já não se tira o campo.
+    campos_acima_do_teto = []
     for error in exc.errors():
         mensagem = error["msg"]
-        
+
+        acima = _campo_acima_do_teto(error)
+        if acima:
+            campos_acima_do_teto.append(acima)
+
         # Remover o clássico prefixo "Value error, " ou "Assertion failed, "
         if mensagem.startswith("Value error, "):
             mensagem = mensagem.replace("Value error, ", "", 1)
@@ -644,10 +670,10 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     # Se houver apenas um erro, envia logo a string. Se vários, junta todos com separador
     detail_msg = " | ".join(erros) if erros else "Erro de validação (dados inválidos)."
 
-    return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={"detail": traduzir_mensagem(detail_msg, _locale_do_pedido(request))},
-    )
+    conteudo: dict = {"detail": traduzir_mensagem(detail_msg, _locale_do_pedido(request))}
+    if campos_acima_do_teto:
+        conteudo["campos_acima_do_teto"] = campos_acima_do_teto
+    return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content=conteudo)
 
 
 def _locale_do_pedido(request: Request) -> str | None:

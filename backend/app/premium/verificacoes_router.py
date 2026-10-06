@@ -14,7 +14,7 @@ não é ver os segredos com que se lá chegou.
 """
 from __future__ import annotations
 
-import json
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -22,13 +22,18 @@ from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlmodel import select
 
+from app.frameworks.runtime import nivel_qnrcs_efetivo
 from app.premium.atores import ator_de
 from app.premium.conetor_client import FEATURES_CONETORES, ConetorClient, get_conetor_client
-from app.premium.conetor_router import _cliente, _declaracoes, _executar, _perfil_qnrcs
+from app.premium import contexto_nucleo
 from app.premium.dependencies import recusar_escrita_em_so_leitura, require_alguma_feature
+from app.premium.erros_conetor import executar_conetor
+from app.premium.pedido import cliente_ou_503
 from app.shared.audit import Acao, registar_acao
 from app.shared.capacidades import ClasseAcao, require_capability
 from app.shared.dependencies import CurrentUserDep, SessionDep
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/verificacoes",
@@ -69,49 +74,31 @@ def _tenant(utilizador) -> str:
     return str(utilizador.empresa_id)
 
 
-_DADO_COMO_FEITO = {"implementado", "aprovado"}
-
-
-def _contradicoes_de_agora(resultado: dict, db, utilizador) -> dict:
-    """A contradição (dado como feito, e a verificação diz que falha) foi apurada
-    com o estado dos controlos da última leitura. Um controlo que entretanto
-    deixou de estar dado como feito já não tem o que contradizer: filtra-se com o
-    estado de agora, que é do core. Sem isto, o painel e a ficha continuavam a
-    acusar até à leitura seguinte."""
+def _declaracoes_de_agora(db, utilizador) -> dict[str, str]:
+    """O estado declarado dos controlos de agora, que é do núcleo: com ele o
+    sidecar apura as contradições (dado como feito, e a verificação diz que falha)
+    na leitura. Fail-soft: uma instalação por semear não tem referencial, e ler as
+    verificações não pode depender disso; sem declarações, o sidecar mostra o que
+    ficou guardado."""
     from app.shared.dependencies import get_empresa_ativa
 
-    sinais = resultado.get("sinais") or []
-    if not any("contradicoes" in (s.get("resumo_json") or "") for s in sinais):
-        return resultado
-    declaracoes = _declaracoes(db, get_empresa_ativa(db, utilizador))
-    feitos = {codigo for codigo, estado in declaracoes.items() if estado in _DADO_COMO_FEITO}
-    for s in sinais:
-        try:
-            resumo = json.loads(s.get("resumo_json") or "{}")
-        except ValueError:
-            continue
-        if not isinstance(resumo, dict) or not resumo.get("contradicoes"):
-            continue
-        atuais = [c for c in resumo["contradicoes"] if c in feitos]
-        if atuais != resumo["contradicoes"]:
-            if atuais:
-                resumo["contradicoes"] = atuais
-            else:
-                resumo.pop("contradicoes")
-            s["resumo_json"] = json.dumps(resumo, ensure_ascii=False)
-    return resultado
+    try:
+        return contexto_nucleo.declaracoes_dos_controlos(db, get_empresa_ativa(db, utilizador))
+    except Exception:  # noqa: BLE001 — ver docstring
+        logger.warning("Verificações: sem o estado dos controlos da empresa %s.", utilizador.empresa_id, exc_info=True)
+        return {}
 
 
 # ── Leituras ─────────────────────────────────────────────────────────────────
 
 @router.get("/catalogo", summary="As fontes, o tema de cada uma e os campos das metas")
 def catalogo(utilizador: CurrentUserDep, cli: ConetorClient | None = ConetorDep):
-    return _executar(_cliente(cli).catalogo, _tenant(utilizador))
+    return executar_conetor(cliente_ou_503(cli).catalogo, _tenant(utilizador))
 
 
 @router.get("/fontes", summary="De onde vêm os dados de cada fonte e de quando são")
 def fontes(utilizador: CurrentUserDep, cli: ConetorClient | None = ConetorDep):
-    return _executar(_cliente(cli).estado_fontes, _tenant(utilizador))
+    return executar_conetor(cliente_ou_503(cli).estado_fontes, _tenant(utilizador))
 
 
 @router.get("/constatacoes", summary="As verificações de um tema (vazio = todas)")
@@ -122,8 +109,10 @@ def constatacoes(
     locale: str = Query("", max_length=16),
     cli: ConetorClient | None = ConetorDep,
 ):
-    resultado = _executar(_cliente(cli).constatacoes, _tenant(utilizador), tema, locale)
-    return _contradicoes_de_agora(resultado, db, utilizador)
+    return executar_conetor(
+        cliente_ou_503(cli).constatacoes,
+        _tenant(utilizador), tema, locale, _declaracoes_de_agora(db, utilizador),
+    )
 
 
 @router.get("/controlos", summary="As verificações ligadas a uns controlos")
@@ -137,8 +126,10 @@ def por_controlos(
     lista = [c.strip() for c in codigos.split(",") if c.strip()][:_MAX_CODIGOS]
     if not lista:
         return {"sinais": []}
-    resultado = _executar(_cliente(cli).constatacoes_dos_controlos, _tenant(utilizador), lista, locale)
-    return _contradicoes_de_agora(resultado, db, utilizador)
+    return executar_conetor(
+        cliente_ou_503(cli).constatacoes_dos_controlos,
+        _tenant(utilizador), lista, locale, _declaracoes_de_agora(db, utilizador),
+    )
 
 
 @router.get("/sinais/{fonte}/{sinal}", summary="Uma verificação por inteiro: passos e afetados")
@@ -149,8 +140,8 @@ def detalhe_sinal(
     locale: str = Query("", max_length=16),
     cli: ConetorClient | None = ConetorDep,
 ):
-    return _executar(
-        _cliente(cli).detalhe_sinal, _tenant(utilizador), fonte, sinal, ator_de(utilizador, "verificacoes"), locale
+    return executar_conetor(
+        cliente_ou_503(cli).detalhe_sinal, _tenant(utilizador), fonte, sinal, ator_de(utilizador, "verificacoes"), locale
     )
 
 
@@ -163,8 +154,8 @@ def eventos(
     cli: ConetorClient | None = ConetorDep,
 ):
     # O histórico do ecrã lê-se do mais recente para trás, página a página.
-    return _executar(
-        _cliente(cli).listar_eventos,
+    return executar_conetor(
+        cliente_ou_503(cli).listar_eventos,
         _tenant(utilizador),
         0,
         limite,
@@ -176,12 +167,12 @@ def eventos(
 
 @router.get("/factos/ativo/{ativo_id}", summary="O que as verificações dizem de uma máquina")
 def factos_do_ativo(ativo_id: uuid.UUID, utilizador: CurrentUserDep, cli: ConetorClient | None = ConetorDep):
-    return _executar(_cliente(cli).factos_do_ativo, _tenant(utilizador), str(ativo_id))
+    return executar_conetor(cliente_ou_503(cli).factos_do_ativo, _tenant(utilizador), str(ativo_id))
 
 
 @router.get("/factos/{dominio}", summary="Os factos de um domínio, máquina a máquina")
 def factos_por_dominio(dominio: str, utilizador: CurrentUserDep, cli: ConetorClient | None = ConetorDep):
-    return _executar(_cliente(cli).factos_por_dominio, _tenant(utilizador), dominio)
+    return executar_conetor(cliente_ou_503(cli).factos_por_dominio, _tenant(utilizador), dominio)
 
 
 @router.get("/alertas", summary="Alertas graves da monitorização, por decidir ou decididos")
@@ -191,7 +182,7 @@ def alertas(
     limite: int = Query(0, ge=0, le=200),
     cli: ConetorClient | None = ConetorDep,
 ):
-    return _executar(_cliente(cli).listar_alertas, _tenant(utilizador), estado, limite)
+    return executar_conetor(cliente_ou_503(cli).listar_alertas, _tenant(utilizador), estado, limite)
 
 
 @router.get("/avisos-risco", summary="O que as verificações dizem dos controlos e do ativo de um risco")
@@ -209,7 +200,7 @@ def avisos_risco(
     Sugere — nunca mexe na probabilidade nem no impacto."""
     from app.frameworks.models import Control, ControloEmpresaV2
 
-    c = _cliente(cli)
+    c = cliente_ou_503(cli)
     ids: list[uuid.UUID] = []
     for parte in controlos.split(","):
         try:
@@ -235,23 +226,26 @@ def avisos_risco(
         for ce_id, control_id, code in linhas:
             enviado = ce_id if ce_id in pedidos else control_id
             codigo_de.setdefault(code, str(enviado))
-    controlos_a_falhar = []
-    if codigo_de:
-        sinais = (_executar(c.constatacoes_dos_controlos, _tenant(utilizador), list(codigo_de), locale))["sinais"]
-        for codigo, ce_id in codigo_de.items():
-            falham = [s for s in sinais if codigo in s["controlos"] and s["veredicto_politica"] == "nao_conforme"]
-            if falham:
-                controlos_a_falhar.append({"controlo_id": ce_id, "codigo": codigo, "sinais": falham})
-    ativo = None
-    if ativo_id is not None:
-        factos = (_executar(c.factos_do_ativo, _tenant(utilizador), str(ativo_id)))["factos"]
-        vulns = next((f for f in factos if f["dominio"] == "vulnerabilidades"), None)
-        if vulns:
-            ativo = {
-                "criticas": int(vulns["dados"].get("critica", 0)) + int(vulns["dados"].get("alta", 0)),
-                "observado_em": vulns["observado_em"],
-            }
-    return {"controlos_a_falhar": controlos_a_falhar, "ativo": ativo}
+    if not codigo_de and ativo_id is None:
+        return {"controlos_a_falhar": [], "ativo": None}
+    # Quem diz o que falha e o que pesa no risco é o sidecar; ao núcleo cabe só
+    # traduzir os ids dos controlos (que são dele) em códigos, e de volta.
+    avisos = executar_conetor(
+        c.avisos_do_risco,
+        _tenant(utilizador),
+        list(codigo_de),
+        str(ativo_id) if ativo_id is not None else "",
+        locale,
+        _declaracoes_de_agora(db, utilizador),
+    )
+    return {
+        "controlos_a_falhar": [
+            {"controlo_id": codigo_de[a["codigo"]], "codigo": a["codigo"], "sinais": a["sinais"]}
+            for a in avisos["controlos_a_falhar"]
+            if a["codigo"] in codigo_de
+        ],
+        "ativo": avisos["ativo"],
+    }
 
 
 # ── Escrita ──────────────────────────────────────────────────────────────────
@@ -265,8 +259,8 @@ def marcar_visto(
     db: SessionDep,
     cli: ConetorClient | None = ConetorDep,
 ):
-    resultado = _executar(
-        _cliente(cli).resolver_evento, _tenant(utilizador), evento_id, dados.nota, ator_de(utilizador, "verificacoes")
+    resultado = executar_conetor(
+        cliente_ou_503(cli).resolver_evento, _tenant(utilizador), evento_id, dados.nota, ator_de(utilizador, "verificacoes")
     )
     registar_acao(
         db, acao=Acao.CONETOR_EVENTO_RESOLVIDO, empresa_id=utilizador.empresa_id,
@@ -298,8 +292,8 @@ def decidir_alerta(
         incidente = db.get(Incidente, inc_id)
         if incidente is None or incidente.empresa_id != utilizador.empresa_id:
             raise HTTPException(status_code=404, detail={"codigo": "nao_encontrado"})
-    resultado = _executar(
-        _cliente(cli).decidir_alerta,
+    resultado = executar_conetor(
+        cliente_ou_503(cli).decidir_alerta,
         _tenant(utilizador),
         alerta_id,
         dados.decisao,
@@ -327,7 +321,7 @@ def decidir_alerta(
 
 @router.get("/metas/{fonte}", summary="As metas da empresa para os sinais de uma fonte")
 def obter_metas(fonte: str, utilizador: CurrentUserDep, cli: ConetorClient | None = ConetorDep):
-    est = _executar(_cliente(cli).estado, _tenant(utilizador), fonte)
+    est = executar_conetor(cliente_ou_503(cli).estado, _tenant(utilizador), fonte)
     return {"fonte": fonte, "sinais_config_json": est.get("sinais_config_json") or "{}"}
 
 
@@ -345,8 +339,8 @@ def definir_metas(
     outros limites contam a partir da próxima leitura."""
     from app.shared.dependencies import get_empresa_ativa
 
-    c = _cliente(cli)
-    _executar(
+    c = cliente_ou_503(cli)
+    executar_conetor(
         c.configurar_politica, _tenant(utilizador), fonte, dados.sinais_config_json, True,
         ator_de(utilizador, "verificacoes"),
     )
@@ -360,7 +354,7 @@ def definir_metas(
     # metas ficaram gravadas, e o tick volta a reavaliar no ciclo seguinte.
     try:
         empresa = get_empresa_ativa(db, utilizador)
-        _executar(c.reavaliar_observacoes, _tenant(utilizador), _perfil_qnrcs(empresa), _declaracoes(db, empresa))
+        executar_conetor(c.reavaliar_observacoes, _tenant(utilizador), nivel_qnrcs_efetivo(empresa), contexto_nucleo.declaracoes_dos_controlos(db, empresa))
     except HTTPException:
         pass
     return {"fonte": fonte, "sinais_config_json": dados.sinais_config_json or "{}"}

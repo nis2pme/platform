@@ -12,7 +12,26 @@ from __future__ import annotations
 
 import logging
 
+from app.premium import client as premium_client
+from app.premium.client import ClienteSidecar
+
 logger = logging.getLogger(__name__)
+
+
+class AnonimizacaoClient(ClienteSidecar):
+    _NOME_STUB = "PurgaServiceStub"
+
+    def anonimizar_pessoa(self, tenant_id: str, utilizador_id: str, nome_substituto: str):
+        from app.premium.proto import premium_pb2  # type: ignore
+
+        return self._ensure_stub().AnonimizarPessoa(
+            premium_pb2.AnonimizarPessoaReq(
+                tenant_id=tenant_id,
+                utilizador_id=utilizador_id,
+                nome_substituto=nome_substituto,
+            ),
+            timeout=30,
+        )
 
 
 class SidecarIndisponivel(Exception):
@@ -28,23 +47,9 @@ def anonimizar_pessoa(tenant_id: str, utilizador_id: str, nome_substituto: str) 
     if not settings.PREMIUM_ENABLED or not settings.PREMIUM_SIDECAR_ADDR:
         return 0
     try:
-        import grpc
-
-        from app.premium.client import criar_canal_sidecar
-        from app.premium.proto import premium_pb2, premium_pb2_grpc
-
-        canal = criar_canal_sidecar(grpc, settings.PREMIUM_SIDECAR_ADDR)
-        try:
-            resp = premium_pb2_grpc.PurgaServiceStub(canal).AnonimizarPessoa(
-                premium_pb2.AnonimizarPessoaReq(
-                    tenant_id=tenant_id,
-                    utilizador_id=utilizador_id,
-                    nome_substituto=nome_substituto,
-                ),
-                timeout=30,
-            )
-        finally:
-            canal.close()
+        resp = premium_client.cliente_partilhado(
+            AnonimizacaoClient, settings.PREMIUM_SIDECAR_ADDR
+        ).anonimizar_pessoa(tenant_id, utilizador_id, nome_substituto)
     except Exception as erro:  # noqa: BLE001 — qualquer falha trava a anonimização
         logger.error("Anonimização no sidecar falhou (tenant=%s): %s", tenant_id, erro)
         raise SidecarIndisponivel(str(erro)) from erro

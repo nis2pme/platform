@@ -18,6 +18,11 @@ set -e
 # ============================================================
 if [ "$(id -u)" = "0" ]; then
     chown -R appuser:appuser /app/data /app/uploads /app/nginx_config 2>/dev/null || true
+    # Pasta onde a app deixa o pedido de atualização para o agente do anfitrião
+    # (bind-mount): a app escreve-lhe como appuser. A de estado é só de leitura.
+    if [ -d /app/atualizacao/pedido ]; then
+        chown appuser:appuser /app/atualizacao/pedido 2>/dev/null || true
+    fi
     # .env do host (bind-mount): o wizard precisa de o ler e escrever como appuser.
     if [ -f /app/.env ]; then
         chown appuser:appuser /app/.env 2>/dev/null || true

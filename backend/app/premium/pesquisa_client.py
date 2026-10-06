@@ -17,6 +17,8 @@ import time
 
 from app.config import get_settings
 from app.pesquisa.schemas import ResultadoPesquisaSchema
+from app.premium import client as premium_client
+from app.premium.client import ClienteSidecar
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -48,6 +50,20 @@ def repor_circuito() -> None:
         _indisponivel_ate = 0.0
 
 
+class PesquisaClient(ClienteSidecar):
+    """Fala com o PesquisaService do sidecar: um canal partilhado, não um por tecla."""
+
+    _NOME_STUB = "PesquisaServiceStub"
+
+    def pesquisar(self, tenant_id: str, q: str, locale: str, limite: int):
+        from app.premium.proto import premium_pb2  # type: ignore
+
+        return self._ensure_stub().Pesquisar(
+            premium_pb2.PesquisaReq(tenant_id=tenant_id, q=q, locale=locale, limite_por_tipo=limite),
+            timeout=TIMEOUT_S,
+        )
+
+
 def sidecar_configurado() -> bool:
     """O sidecar EXISTE nesta instalação? (só configuração, sem rede)"""
     return bool(settings.PREMIUM_ENABLED and settings.PREMIUM_SIDECAR_ADDR)
@@ -69,22 +85,8 @@ def pesquisar_premium(
         return [], True
 
     try:
-        import grpc  # noqa: F401  (só existe quando o extra premium está instalado)
-
-        from app.premium.client import criar_canal_sidecar
-        from app.premium.proto import premium_pb2, premium_pb2_grpc
-
-        canal = criar_canal_sidecar(grpc, settings.PREMIUM_SIDECAR_ADDR)
-        try:
-            stub = premium_pb2_grpc.PesquisaServiceStub(canal)
-            resp = stub.Pesquisar(
-                premium_pb2.PesquisaReq(
-                    tenant_id=tenant_id, q=q, locale=locale, limite_por_tipo=limite
-                ),
-                timeout=TIMEOUT_S,
-            )
-        finally:
-            canal.close()
+        cliente = premium_client.cliente_partilhado(PesquisaClient, settings.PREMIUM_SIDECAR_ADDR)
+        resp = cliente.pesquisar(tenant_id, q, locale, limite)
     except Exception as exc:  # noqa: BLE001 — fail-soft deliberado, ver docstring
         logger.info("pesquisa premium indisponível (%s) — só resultados do core", exc)
         _marcar_indisponivel()

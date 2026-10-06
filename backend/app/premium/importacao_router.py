@@ -5,36 +5,30 @@ Router da Importação de dados de ferramentas externas (premium).
 limitar o tamanho, recusar o que claramente não é um ficheiro de texto, calcular
 a impressão digital do conteúdo e registar a auditoria — e encaminha os bytes
 para o sidecar por mTLS. **Não interpreta o ficheiro**: quem sabe ler um CSV do
-GLPI ou um export do Monarc é o sidecar, e é lá que essa metodologia vive.
+GLPI ou um export do Monarc é o sidecar.
 
 Três gates que se acumulam:
   - require_feature("data_import")        → o tenant tem o módulo? (402)
   - require_capability("importacao", …)   → consultar as fontes é leitura;
                                             submeter um ficheiro é escrita (403)
-  - a cancela deste ficheiro              → o conteúdo é aceitável? (400/413)
-
-Nota sobre validação de tipo: CSV e JSON **não têm assinatura binária**. Uma
-lista de assinaturas "permitidas" não existe para eles, por isso o que se faz é
-o inverso — recusar as assinaturas de formatos que não aceitamos (Excel, PDF,
-comprimidos, executáveis) e exigir que o resto seja texto legível. Um ZIP nunca
-chega ao analisador, e é isso que interessa.
+  - a cancela (`cancela.py`)              → o conteúdo é aceitável? (400/413)
 """
 from __future__ import annotations
 
 import hashlib
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from pydantic import BaseModel, Field
 
-from app.config import get_settings
-from app.premium.client import (PremiumIndisponivelError,
-                                e_indisponibilidade)
-from app.premium.client import e_valor_fora_do_contrato
-from app.premium.recusas import recusa_de_licenca
+from app.frameworks.runtime import nivel_qnrcs_efetivo
+from app.premium import contexto_nucleo
 from app.premium.atores import ator_de
+from app.premium.cancela import validar_conteudo
 from app.premium.dependencies import require_feature
+from app.premium.erros_importacao import executar_importacao
 from app.premium.importacao_client import ImportacaoClient, get_importacao_client
+from app.premium.pedido import cliente_ou_503, locale_do_pedido
 from app.shared.audit import Acao, registar_acao
 from app.shared.capacidades import ClasseAcao, require_capability
 from app.shared.dependencies import CurrentUserDep, SessionDep
@@ -52,34 +46,11 @@ _OperarImportacao = Depends(require_capability("importacao", ClasseAcao.OPERAR))
 
 ImportacaoDep = Depends(get_importacao_client)
 
-settings = get_settings()
-_MAX_BYTES = settings.IMPORT_MAX_SIZE_MB * 1024 * 1024
-
-# Assinaturas de formatos que NÃO aceitamos nesta fase. Recusar aqui, com nome,
-# é o que permite ao wizard dizer "isto é um Excel — guarde como CSV" em vez de
-# deixar o utilizador a olhar para um erro de leitura.
-_ASSINATURAS_RECUSADAS: list[tuple[bytes, str]] = [
-    (b"PK\x03\x04", "xlsx_ou_zip"),
-    (b"%PDF", "pdf"),
-    (b"\xd0\xcf\x11\xe0", "xls_antigo"),
-    (b"\x7fELF", "binario"),
-    (b"MZ", "binario"),
-    (b"\x1f\x8b", "gzip"),
-    (b"\x89PNG", "imagem"),
-    (b"\xff\xd8\xff", "imagem"),
-]
-
-
-# O nome do 413 mudou nas versões recentes do Starlette; usa-se o atual quando
-# existe para não semear avisos de depreciação no arranque.
-_HTTP_413 = getattr(status, "HTTP_413_CONTENT_TOO_LARGE", 413)
-
-
 # ── Corpos dos pedidos ───────────────────────────────────────────────────────
 #
 # O core valida a FORMA (é um mapeamento? cabe nos limites?) e não o SENTIDO
 # (esta coluna corresponde a este campo?) — quem sabe o que as colunas querem
-# dizer é o sidecar, e é lá que essa metodologia vive.
+# dizer é o sidecar.
 
 class ColunaMapeadaIn(BaseModel):
     # Os tetos são os do leitor do sidecar: um cabeçalho tem no máximo o tamanho
@@ -147,222 +118,6 @@ class DecisaoDescobertasIn(BaseModel):
     acao: str = Field(pattern="^(aceitar|ignorar)$")
 
 
-def _cliente(cli: ImportacaoClient | None) -> ImportacaoClient:
-    if cli is None:
-        raise HTTPException(status_code=503, detail={"codigo": "premium_indisponivel"})
-    return cli
-
-
-def _recusar(codigo: str, http: int = status.HTTP_400_BAD_REQUEST, **extra):
-    raise HTTPException(status_code=http, detail={"codigo": codigo, **extra})
-
-
-def _validar_conteudo(conteudo: bytes, content_type: str) -> None:
-    """Cancela do core: tamanho, tipo declarado, assinatura e legibilidade."""
-    if not conteudo:
-        _recusar("ficheiro_vazio")
-    if len(conteudo) > _MAX_BYTES:
-        _recusar(
-            "ficheiro_grande",
-            http=_HTTP_413,
-            limite_mb=settings.IMPORT_MAX_SIZE_MB,
-        )
-    if (content_type or "") not in settings.IMPORT_ALLOWED_MIME_TYPES:
-        _recusar("tipo_nao_permitido", tipo=content_type)
-
-    for assinatura, nome in _ASSINATURAS_RECUSADAS:
-        if conteudo.startswith(assinatura):
-            _recusar("formato_nao_suportado", detetado=nome)
-
-    # Bytes nulos no início não aparecem em texto — exceto em UTF-16, que tem
-    # marca própria e é legítimo. Sem isto, qualquer binário sem assinatura
-    # conhecida passava a cancela.
-    cabeca = conteudo[:512]
-    if b"\x00" in cabeca and not conteudo.startswith((b"\xff\xfe", b"\xfe\xff")):
-        _recusar("formato_nao_suportado", detetado="binario")
-
-
-def _executar(fn, *args, **kwargs):
-    """Faz a chamada gRPC e traduz os erros em HTTP."""
-    try:
-        return fn(*args, **kwargs)
-    except HTTPException:
-        raise
-    except PremiumIndisponivelError:
-        # O sidecar não está utilizável: canal por montar, material de TLS em
-        # falta, transporte ausente. É indisponibilidade do módulo, não avaria da
-        # plataforma — e a diferença é a que o cliente precisa de ver para saber
-        # se age (renovar a licença, verificar a rede) ou se reporta um defeito.
-        # Antes escapava daqui e saía 500 em todas as rotas premium.
-        raise HTTPException(status_code=503, detail={"codigo": "premium_indisponivel"})
-    except Exception as exc:  # noqa: BLE001 — traduzido abaixo
-        if e_valor_fora_do_contrato(exc):
-            raise HTTPException(status_code=400, detail={"codigo": "valor_fora_de_intervalo"}) from exc
-        recusa = recusa_de_licenca(exc, incluir_modulo=False)
-        if recusa is not None:
-            raise recusa from exc
-        try:
-            import grpc  # type: ignore
-        except ImportError:
-            raise
-        if isinstance(exc, grpc.RpcError):
-            code = exc.code()
-            if code == grpc.StatusCode.NOT_FOUND:
-                raise HTTPException(status_code=404, detail={"codigo": "nao_encontrado"})
-            if code == grpc.StatusCode.PERMISSION_DENIED:
-                # Falta o módulo de DESTINO (o inventário, o risco, os conetores)
-                # e não a permissão de quem pede: quem escreve num módulo tem de
-                # ter o módulo. É 402 como qualquer outra funcionalidade em falta,
-                # e leva o nome do módulo para o ecrã poder propor o upgrade em
-                # vez de mostrar um erro seco.
-                modulo = _modulo_em_falta(exc.details())
-                if modulo:
-                    raise HTTPException(
-                        status_code=402,
-                        detail={"codigo": "modulo_em_falta", "modulo": modulo},
-                    )
-                raise HTTPException(status_code=403, detail={"codigo": "sem_permissao_recurso"})
-            if code == grpc.StatusCode.INVALID_ARGUMENT:
-                # Lote de decisões acima do teto. Vem antes do corpo estruturado
-                # porque não é um problema do ficheiro: dizer "ficheiro inválido"
-                # a quem escolheu máquinas de mais manda-o procurar no sítio errado.
-                maximo = _lote_grande(exc.details())
-                if maximo:
-                    raise HTTPException(
-                        status_code=400,
-                        detail={"codigo": "lote_grande", "maximo": maximo},
-                    )
-                # O sidecar devolve um corpo estruturado (código + linha) para o
-                # frontend poder dizer "linha 42: …" no idioma do utilizador.
-                raise HTTPException(
-                    status_code=400, detail=_detalhe_do_sidecar(exc.details())
-                )
-            if code == grpc.StatusCode.RESOURCE_EXHAUSTED:
-                raise HTTPException(
-                    status_code=413,
-                    detail={"codigo": "ficheiro_grande", "limite_mb": settings.IMPORT_MAX_SIZE_MB},
-                )
-            if code == grpc.StatusCode.FAILED_PRECONDITION:
-                # Teto de registos do plano. É 402 como o módulo em falta — é a
-                # mesma família de recusa (o plano não dá) e o ecrã propõe o
-                # upgrade em vez de dizer que a plataforma avariou.
-                numeros = _limite_do_plano(exc.details())
-                if numeros:
-                    total, limite = numeros
-                    raise HTTPException(
-                        status_code=402,
-                        detail={"codigo": "limite_do_plano", "total": total, "limite": limite},
-                    )
-                # Travão por confirmar (ex.: T3, relatório mais antigo do que o
-                # que já entrou). É uma recusa com resposta possível — o corpo
-                # leva o código e os números para o ecrã perguntar. Sem isto
-                # caía no 503 abaixo e o utilizador lia "premium indisponível"
-                # sobre uma plataforma que está perfeitamente de pé.
-                travao = _corpo_estruturado(exc.details())
-                if travao:
-                    raise HTTPException(status_code=409, detail=travao)
-                raise HTTPException(status_code=503, detail={"codigo": "premium_indisponivel"})
-            if code == grpc.StatusCode.UNIMPLEMENTED:
-                raise HTTPException(status_code=501, detail={"codigo": "por_implementar"})
-            if e_indisponibilidade(exc):
-                # Sidecar em baixo ou pendurado. O 502 dizia «o upstream
-                # respondeu mal»; aqui não respondeu de todo. Sem isto, a mesma
-                # avaria saía 502 ou 503 conforme a cache de entitlements
-                # estivesse quente — e um alerta não se constrói sobre isso.
-                raise HTTPException(
-                    status_code=503, detail={"codigo": "premium_indisponivel"}
-                )
-            raise HTTPException(status_code=502, detail={"codigo": "importacao_erro"})
-        raise
-
-
-# Prefixo estável da recusa do sidecar por falta do módulo de destino. Tem de
-# acompanhar a constante do outro lado do contrato.
-_PREFIXO_MODULO = "sem_direito_modulo:"
-
-# Os módulos que a importação pode alcançar. Uma lista fechada porque o que sai
-# daqui vai para o cliente: sem ela, o sidecar poderia induzir o core a repetir
-# texto arbitrário numa resposta HTTP.
-_MODULOS_CONHECIDOS = {
-    "asset_inventory", "risk_analysis",
-    # Um conetor por ferramenta de observação (e o do AD, cujo ficheiro
-    # também chega por upload).
-    "connector_m365", "connector_ad", "connector_gvm", "connector_wazuh",
-}
-
-
-def _modulo_em_falta(detalhes: str | None) -> str | None:
-    """Nome do módulo em falta, ou `None` se a recusa foi por outra razão."""
-    if not detalhes or not detalhes.startswith(_PREFIXO_MODULO):
-        return None
-    modulo = detalhes[len(_PREFIXO_MODULO):].strip()
-    return modulo if modulo in _MODULOS_CONHECIDOS else None
-
-
-# Prefixo estável da recusa do sidecar por teto de registos do plano.
-_PREFIXO_LIMITE = "limite_do_plano:"
-
-# Prefixo estável da recusa por lote de decisões acima do teto.
-_PREFIXO_LOTE = "lote_grande:"
-
-
-def _lote_grande(detalhes: str | None) -> int | None:
-    """Teto de decisões por pedido, ou `None` se a recusa foi por outra razão."""
-    if not detalhes or not detalhes.startswith(_PREFIXO_LOTE):
-        return None
-    try:
-        maximo = int(detalhes[len(_PREFIXO_LOTE):])
-    except ValueError:
-        return None
-    return maximo if maximo > 0 else None
-
-
-def _limite_do_plano(detalhes: str | None) -> tuple[int, int] | None:
-    """`(total, limite)` da recusa por teto do plano, ou `None`.
-
-    Só números, e só dois: o que vem do sidecar é repetido ao cliente, por isso
-    nada aqui aceita texto livre.
-    """
-    if not detalhes or not detalhes.startswith(_PREFIXO_LIMITE):
-        return None
-    partes = detalhes[len(_PREFIXO_LIMITE):].split(":")
-    if len(partes) != 2:
-        return None
-    try:
-        total, limite = int(partes[0]), int(partes[1])
-    except ValueError:
-        return None
-    if total < 0 or limite < 0:
-        return None
-    return total, limite
-
-
-def _corpo_estruturado(detalhes: str | None) -> dict | None:
-    """Corpo de erro do sidecar, ou `None` se não vier no formato acordado.
-
-    Devolver `None` — em vez de um código de omissão — é o que permite a quem
-    chama distinguir "o sidecar disse-me qual é o problema" de "veio texto que
-    não sei ler". Sem essa distinção, uma recusa com nome era indistinguível de
-    uma avaria.
-    """
-    import json
-
-    try:
-        corpo = json.loads(detalhes or "")
-        detalhe = corpo.get("detail")
-        if isinstance(detalhe, dict) and detalhe.get("codigo"):
-            return detalhe
-    except (ValueError, AttributeError):
-        pass
-    return None
-
-
-def _detalhe_do_sidecar(detalhes: str | None) -> dict:
-    """O mesmo corpo, com um código genérico quando não há nada a ler. Nunca
-    propaga texto cru do sidecar para o cliente."""
-    return _corpo_estruturado(detalhes) or {"codigo": "ficheiro_invalido"}
-
-
 # ── Leitura ──────────────────────────────────────────────────────────────────
 
 @router.get("/fontes", summary="Ferramentas de onde se pode importar")
@@ -372,8 +127,8 @@ def fontes(
     destino: str = "",
     cli: ImportacaoClient | None = ImportacaoDep,
 ):
-    c = _cliente(cli)
-    return _executar(c.listar_fontes, str(utilizador.empresa_id), locale, destino)
+    c = cliente_ou_503(cli)
+    return executar_importacao(c.listar_fontes, str(utilizador.empresa_id), locale, destino)
 
 
 # ── Análise (não escreve nada) ───────────────────────────────────────────────
@@ -397,12 +152,12 @@ def analisar(
     locale: str = Form(""),
     cli: ImportacaoClient | None = ImportacaoDep,
 ):
-    c = _cliente(cli)
+    c = cliente_ou_503(cli)
     conteudo = ficheiro.file.read()
-    _validar_conteudo(conteudo, ficheiro.content_type or "")
+    validar_conteudo(conteudo, ficheiro.content_type or "")
     sha256 = hashlib.sha256(conteudo).hexdigest()
 
-    resultado = _executar(
+    resultado = executar_importacao(
         c.analisar_ficheiro,
         str(utilizador.empresa_id),
         conteudo,
@@ -468,16 +223,15 @@ def observacao(
     Substituir um retrato recente por um antigo é a única forma de isto correr
     mal, e é o que o travão T3 põe à frente de uma pessoa antes de acontecer.
     """
-    from app.premium.conetor_router import _declaracoes, _perfil_qnrcs
     from app.shared.dependencies import get_empresa_ativa
 
-    c = _cliente(cli)
+    c = cliente_ou_503(cli)
     conteudo = ficheiro.file.read()
-    _validar_conteudo(conteudo, ficheiro.content_type or "")
+    validar_conteudo(conteudo, ficheiro.content_type or "")
     sha256 = hashlib.sha256(conteudo).hexdigest()
 
     empresa = get_empresa_ativa(db, utilizador)
-    resultado = _executar(
+    resultado = executar_importacao(
         c.importar_observacao,
         str(utilizador.empresa_id),
         conteudo,
@@ -487,8 +241,8 @@ def observacao(
             "sha256": sha256,
             "locale": locale,
         },
-        _perfil_qnrcs(empresa),
-        _declaracoes(db, empresa),
+        nivel_qnrcs_efetivo(empresa),
+        contexto_nucleo.declaracoes_dos_controlos(db, empresa),
         ator_de(utilizador, "importacao"),
         travoes_confirmados,
     )
@@ -535,8 +289,8 @@ def simular(
     corpo: SimulacaoIn,
     cli: ImportacaoClient | None = ImportacaoDep,
 ):
-    c = _cliente(cli)
-    diff = _executar(
+    c = cliente_ou_503(cli)
+    diff = executar_importacao(
         c.simular,
         str(utilizador.empresa_id),
         importacao_id,
@@ -580,8 +334,8 @@ def aplicar(
     corpo: AplicarIn,
     cli: ImportacaoClient | None = ImportacaoDep,
 ):
-    c = _cliente(cli)
-    resumo = _executar(
+    c = cliente_ou_503(cli)
+    resumo = executar_importacao(
         c.aplicar,
         str(utilizador.empresa_id),
         importacao_id,
@@ -624,8 +378,8 @@ def reverter(
     db: SessionDep,
     cli: ImportacaoClient | None = ImportacaoDep,
 ):
-    c = _cliente(cli)
-    resumo = _executar(
+    c = cliente_ou_503(cli)
+    resumo = executar_importacao(
         c.reverter,
         str(utilizador.empresa_id),
         importacao_id,
@@ -661,8 +415,8 @@ def historico(
     offset: int = 0,
     cli: ImportacaoClient | None = ImportacaoDep,
 ):
-    c = _cliente(cli)
-    return _executar(
+    c = cliente_ou_503(cli)
+    return executar_importacao(
         c.listar_importacoes,
         str(utilizador.empresa_id),
         fonte,
@@ -684,8 +438,8 @@ def descobertas(
     limite: int = 100,
     cli: ImportacaoClient | None = ImportacaoDep,
 ):
-    c = _cliente(cli)
-    return _executar(
+    c = cliente_ou_503(cli)
+    return executar_importacao(
         c.listar_descobertas, str(utilizador.empresa_id), estado, max(1, min(limite, 500))
     )
 
@@ -703,8 +457,8 @@ def decidir_descobertas(
     cli: ImportacaoClient | None = ImportacaoDep,
 ):
     """Aceitar cria os ativos; dispensar fecha a proposta sem escrever nada."""
-    c = _cliente(cli)
-    resultado = _executar(
+    c = cliente_ou_503(cli)
+    resultado = executar_importacao(
         c.decidir_descobertas,
         str(utilizador.empresa_id),
         corpo.ids,
@@ -736,9 +490,8 @@ def documento(
 ):
     """Payload do documento, localizado. Quem o transforma em PDF é o cliente —
     é o mesmo caminho dos restantes documentos-evidência."""
-    c = _cliente(cli)
-    locale = request.headers.get("accept-language", "")[:5]
-    return _executar(c.documento, str(utilizador.empresa_id), locale)
+    c = cliente_ou_503(cli)
+    return executar_importacao(c.documento, str(utilizador.empresa_id), locale_do_pedido(request))
 
 
 @router.get("/qualidade", summary="Qualidade do inventário, em números")
@@ -746,8 +499,8 @@ def qualidade(
     utilizador: CurrentUserDep,
     cli: ImportacaoClient | None = ImportacaoDep,
 ):
-    c = _cliente(cli)
-    return _executar(c.qualidade, str(utilizador.empresa_id))
+    c = cliente_ou_503(cli)
+    return executar_importacao(c.qualidade, str(utilizador.empresa_id))
 
 
 @router.get("/{importacao_id}", summary="Detalhe de uma importação")
@@ -756,8 +509,8 @@ def detalhe(
     utilizador: CurrentUserDep,
     cli: ImportacaoClient | None = ImportacaoDep,
 ):
-    c = _cliente(cli)
-    return _executar(c.detalhe, str(utilizador.empresa_id), importacao_id)
+    c = cliente_ou_503(cli)
+    return executar_importacao(c.detalhe, str(utilizador.empresa_id), importacao_id)
 
 
 # ── Perfis de mapeamento do tenant ───────────────────────────────────────────
@@ -768,8 +521,8 @@ def perfis(
     fonte: str = "",
     cli: ImportacaoClient | None = ImportacaoDep,
 ):
-    c = _cliente(cli)
-    return _executar(c.listar_perfis, str(utilizador.empresa_id), fonte)
+    c = cliente_ou_503(cli)
+    return executar_importacao(c.listar_perfis, str(utilizador.empresa_id), fonte)
 
 
 @router.post(
@@ -782,8 +535,8 @@ def guardar_perfil(
     corpo: PerfilIn,
     cli: ImportacaoClient | None = ImportacaoDep,
 ):
-    c = _cliente(cli)
-    return _executar(
+    c = cliente_ou_503(cli)
+    return executar_importacao(
         c.guardar_perfil,
         str(utilizador.empresa_id),
         corpo.fonte,

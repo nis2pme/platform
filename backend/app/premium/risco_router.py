@@ -20,24 +20,21 @@ from __future__ import annotations
 
 import logging
 import uuid
+from functools import partial
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel
-from sqlmodel import select
+from pydantic import BaseModel, Field
 
 from app.controlos.service import ControloCitado, controlos_citados
-from app.frameworks.models import ControloEmpresaV2
-from app.premium.client import (PremiumIndisponivelError,
-                                e_indisponibilidade)
-from app.premium.client import e_valor_fora_do_contrato
-from app.premium.recusas import recusa_de_licenca
-from app.premium.atores import ator_de, negar_capacidade, registar_recusa_de_recurso, resolver_pessoa
+from app.premium import contexto_nucleo
+from app.premium.atores import ator_de, negar_capacidade, resolver_pessoa
 from app.premium.dependencies import require_feature
+from app.premium.erros import executar_grpc
+from app.premium.pedido import cliente_ou_503, fundir_alteracoes, locale_do_pedido, uuid_ou_none
 from app.premium.risco_client import RiscoClient, get_risco_client
 from app.shared.audit import Acao, registar_acao
 from app.shared.capacidades import ClasseAcao, require_capability, tem_capacidade
 from app.shared.dependencies import CurrentUserDep, SessionDep, get_empresa_ativa
-from app.shared.enums import EstadoControlo
 from app.shared.i18n import MsgsI18n, locale_de_request, traduzir
 from app.shared.utils import parse_accept_language
 
@@ -60,35 +57,47 @@ GovernarDep = Depends(require_capability("risco", ClasseAcao.GOVERNAR))
 
 # ── Schemas de entrada ────────────────────────────────────────────────────────
 
+# Os tetos seguem o uso (títulos e nomes curtos, ameaça e vulnerabilidade de uma
+# linha, justificações de uma ou duas páginas) e são os mesmos que o sidecar impõe,
+# que é quem decide. Sem eles, um risco com campos de 1 MiB fazia a listagem (até 500
+# riscos numa só mensagem gRPC) deixar de abrir para toda a empresa.
+#
+# O nome de uma pessoa externa (`dono_nome`, `responsavel_nome`) não leva `max_length`:
+# quem o limita é `resolver_pessoa`, que corta ao teto o nome novo e deixa como está o
+# que já estava guardado. Um teto aqui recusava (422) o PUT de um risco cujo dono,
+# importado de uma fonte ou de antes de haver tetos, passa dos 200: o ecrã devolve o
+# registo inteiro.
 class RiscoIn(BaseModel):
-    titulo: str
-    descricao: str = ""
-    ativo_id: str = ""
-    ameaca: str = ""
-    vulnerabilidade: str = ""
+    titulo: str = Field(max_length=200)
+    descricao: str = Field("", max_length=4000)
+    ativo_id: str = Field("", max_length=64)
+    ameaca: str = Field("", max_length=500)
+    vulnerabilidade: str = Field("", max_length=500)
     probabilidade: int = 1
     impacto: int = 1
-    estado: str = "aberto"
-    dono_id: str = ""
+    estado: str = Field("aberto", max_length=32)
+    dono_id: str = Field("", max_length=64)
     dono_nome: str = ""
-    justificacao: str = ""
-    cenario_chave: str = ""
+    justificacao: str = Field("", max_length=4000)
+    cenario_chave: str = Field("", max_length=64)
 
 
 class ReavaliarIn(BaseModel):
     probabilidade: int
     impacto: int
-    justificacao: str = ""
+    justificacao: str = Field("", max_length=4000)
 
 
 class DefinicoesIn(BaseModel):
-    limiar_tratar: int = 10
-    limiar_urgente: int = 15
-    aprovador: str = ""
-    data_aprovacao: str = ""
-    periodicidade_altos: int = 3
-    periodicidade_moderados: int = 6
-    periodicidade_baixos: int = 12
+    # Os números só seguem se vieram: os valores por omissão são do sidecar, que é
+    # o único sítio onde existem.
+    limiar_tratar: int | None = None
+    limiar_urgente: int | None = None
+    aprovador: str = Field("", max_length=200)
+    data_aprovacao: str = Field("", max_length=32)
+    periodicidade_altos: int | None = None
+    periodicidade_moderados: int | None = None
+    periodicidade_baixos: int | None = None
 
 
 # Comprimento mínimo da justificação ao ACEITAR um risco. O mesmo critério que
@@ -99,13 +108,13 @@ JUSTIFICACAO_ACEITACAO_MIN = 10
 
 
 class TratamentoIn(BaseModel):
-    tipo: str = "mitigar"
-    controlo_id: str = ""
-    descricao: str = ""
-    estado: str = "planeado"
+    tipo: str = Field("mitigar", max_length=32)
+    controlo_id: str = Field("", max_length=64)
+    descricao: str = Field("", max_length=4000)
+    estado: str = Field("planeado", max_length=32)
     prioridade: int = 0
-    data_alvo: str = ""
-    responsavel_id: str = ""
+    data_alvo: str = Field("", max_length=32)
+    responsavel_id: str = Field("", max_length=64)
     responsavel_nome: str = ""
 
 
@@ -132,12 +141,6 @@ def _exigir_justificacao_de_aceitacao(tipo: str, descricao: str) -> None:
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-def _cliente(cli: RiscoClient | None) -> RiscoClient:
-    if cli is None:
-        raise HTTPException(status_code=503, detail={"codigo": "premium_indisponivel"})
-    return cli
-
-
 def _titulo_do_risco(cli, tenant: str, risco_id: str) -> str | None:
     """
     Título do risco a que um tratamento pertence, só para o registo.
@@ -149,22 +152,26 @@ def _titulo_do_risco(cli, tenant: str, risco_id: str) -> str | None:
     À prova de falha: o título é um extra e nunca pode fazer cair a operação.
     """
     try:
-        risco = _executar(_cliente(cli).obter, tenant, risco_id)
+        risco = _executar(cliente_ou_503(cli).obter, tenant, risco_id)
         return risco.get("titulo") or None
     except Exception:  # noqa: BLE001 — o título é um extra, nunca um requisito
         return None
 
 
-def _locale(request: Request) -> str:
-    lang = (request.headers.get("Accept-Language") or "").lower()
-    return "en" if lang.startswith("en") else "pt-PT"
+def _tratamento_do_risco(risco: dict, trat_id: str) -> dict:
+    """O tratamento `trat_id` entre os do risco lido; 404 se não for deste risco.
 
-
-def _uuid_ou_none(valor: str) -> uuid.UUID | None:
-    try:
-        return uuid.UUID(valor)
-    except (ValueError, TypeError):
-        return None
+    Um tratamento pertence a um risco. Quem tem direitos sobre o risco do URL não
+    os ganha sobre o tratamento de outro: sem esta conferência, a decisão de
+    capacidade seria tomada sobre o tratamento errado (um tipo que não é o do
+    registo que se vai alterar) e a trilha ficaria com o risco errado. Corre antes
+    de qualquer verificação de capacidade, e cobre também um sidecar que ainda não
+    confere o par.
+    """
+    for t in risco.get("tratamentos") or []:
+        if t.get("id") == trat_id:
+            return t
+    raise HTTPException(status_code=404, detail={"codigo": "nao_encontrado"})
 
 
 def _exigir_delegar(utilizador, request: Request | None = None) -> None:
@@ -185,34 +192,6 @@ def _classe_para_tratamento(*tipos: str) -> ClasseAcao:
     return (
         ClasseAcao.GOVERNAR if "aceitar" in tipos else ClasseAcao.OPERAR
     )
-
-
-def _maturidades(db, empresa_id) -> dict[str, int]:
-    """Mapa {controlo_id → nível de maturidade} do tenant, para o sidecar calcular o
-    risco residual (a maturidade é do core; o sidecar nunca lê o core-db). Com a
-    resolução dos controlos citados pelo risco (abaixo), é a única lógica de
-    domínio do core nos módulos premium: ambas leem controlos, que são do core."""
-    rows = db.exec(
-        select(
-            ControloEmpresaV2.id,
-            ControloEmpresaV2.control_id,
-            ControloEmpresaV2.nivel_maturidade_atual,
-            ControloEmpresaV2.estado,
-        ).where(ControloEmpresaV2.empresa_id == empresa_id)
-    ).all()
-    # O tratamento guarda o id do controlo que o ecrã lhe deu, que é o do quadro
-    # (o de `/controlos`); dados antigos podem ter o da empresa. Os dois servem.
-    mapa: dict[str, int] = {}
-    for ce_id, control_id, nivel, estado in rows:
-        # Um controlo «não aplicável» saiu do âmbito: a maturidade que tinha não
-        # se apaga ao marcá-lo, mas já não protege nada, por isso não reduz o
-        # residual. Fora do mapa, o sidecar trata-o como um controlo sem maturidade.
-        if estado == EstadoControlo.NAO_APLICAVEL:
-            continue
-        mapa[str(ce_id)] = int(nivel or 0)
-        if control_id is not None:
-            mapa.setdefault(str(control_id), int(nivel or 0))
-    return mapa
 
 
 def _controlos_citados(
@@ -277,7 +256,7 @@ def _controlo_validado(db, utilizador, request: Request, controlo_id: str) -> st
     """
     if not controlo_id:
         return ""
-    uid = _uuid_ou_none(controlo_id)
+    uid = uuid_ou_none(controlo_id)
     if uid is not None and _controlos_citados(db, utilizador, request, ids={uid}):
         return str(uid)
     raise HTTPException(
@@ -291,65 +270,10 @@ def _controlo_validado(db, utilizador, request: Request, controlo_id: str) -> st
     )
 
 
-def _executar(fn, *args, utilizador=None):
-    """Faz a chamada gRPC e traduz os erros em HTTP.
-
-    `utilizador` só é passado nas escritas: é quando o sidecar pode recusar por
-    âmbito (o registo não está atribuído ao ator), e é essa recusa que fica na
-    trilha. Nas leituras não há âmbito a violar, por isso fica de fora."""
-    try:
-        return fn(*args)
-    except HTTPException:
-        raise
-    except PremiumIndisponivelError:
-        # O sidecar não está utilizável: canal por montar, material de TLS em
-        # falta, transporte ausente. É indisponibilidade do módulo, não avaria da
-        # plataforma — e a diferença é a que o cliente precisa de ver para saber
-        # se age (renovar a licença, verificar a rede) ou se reporta um defeito.
-        # Antes escapava daqui e saía 500 em todas as rotas premium.
-        raise HTTPException(status_code=503, detail={"codigo": "premium_indisponivel"})
-    except Exception as exc:  # noqa: BLE001 — traduzido abaixo
-        if e_valor_fora_do_contrato(exc):
-            raise HTTPException(status_code=400, detail={"codigo": "valor_fora_de_intervalo"}) from exc
-        recusa = recusa_de_licenca(exc)
-        if recusa is not None:
-            raise recusa from exc
-        try:
-            import grpc  # type: ignore
-        except ImportError:
-            raise
-        if isinstance(exc, grpc.RpcError):
-            code = exc.code()
-            if code == grpc.StatusCode.NOT_FOUND:
-                raise HTTPException(status_code=404, detail={"codigo": "nao_encontrado"})
-            if code == grpc.StatusCode.PERMISSION_DENIED:
-                # Âmbito do ator: o registo não lhe está atribuído.
-                if utilizador is not None:
-                    registar_recusa_de_recurso(utilizador, "risco")
-                raise HTTPException(
-                    status_code=403, detail={"codigo": "sem_permissao_recurso"}
-                )
-            if code == grpc.StatusCode.INVALID_ARGUMENT:
-                raise HTTPException(
-                    status_code=400, detail={"codigo": "risco_invalido", "msg": exc.details()}
-                )
-            if code == grpc.StatusCode.FAILED_PRECONDITION:
-                # Estado que impede a ação, corrigível por quem pediu → 409.
-                # Um 5xx aqui diria que a plataforma avariou, e não avariou.
-                raise HTTPException(
-                    status_code=409,
-                    detail={"codigo": "estado_invalido", "msg": exc.details()},
-                )
-            if e_indisponibilidade(exc):
-                # Sidecar em baixo ou pendurado. O 502 dizia «o upstream
-                # respondeu mal»; aqui não respondeu de todo. Sem isto, a mesma
-                # avaria saía 502 ou 503 conforme a cache de entitlements
-                # estivesse quente — e um alerta não se constrói sobre isso.
-                raise HTTPException(
-                    status_code=503, detail={"codigo": "premium_indisponivel"}
-                )
-            raise HTTPException(status_code=502, detail={"codigo": "risco_erro"})
-        raise
+# `utilizador` só nas escritas: é quando o sidecar pode recusar por âmbito (o
+# registo não está atribuído ao ator), e é essa recusa que fica na trilha. Nas
+# leituras não há âmbito a violar, por isso fica de fora.
+_executar = partial(executar_grpc, modulo="risco")
 
 
 # ── Catálogo de cenários ─────────────────────────────────────────────────────
@@ -363,7 +287,7 @@ def listar_cenarios(
     cli: RiscoClient | None = RiscoDep,
 ):
     tenant = str(utilizador.empresa_id)
-    cenarios = _executar(_cliente(cli).listar_cenarios, tenant, tipo, _locale(request))
+    cenarios = _executar(cliente_ou_503(cli).listar_cenarios, tenant, tipo, locale_do_pedido(request))
     # Os códigos sugeridos pelo catálogo, resolvidos no quadro da empresa: código
     # e título para todos; estado e maturidade só para quem vê o controlo.
     codigos = {
@@ -375,7 +299,7 @@ def listar_cenarios(
     }
     fora_do_quadro: set[str] = set()
     for cenario in cenarios:
-        sugeridos = cenario.get("controlos_sugeridos") or []
+        sugeridos = cenario.pop("controlos_sugeridos", None) or []
         cenario["controlos"] = [
             _controlo_sugerido(por_codigo[codigo])
             for codigo in sugeridos
@@ -397,6 +321,7 @@ def listar_cenarios(
 @router.get("/riscos", summary="Listar riscos (ordenados por nível; filtros opcionais)")
 def listar_riscos(
     utilizador: CurrentUserDep,
+    db: SessionDep,
     estado: str = "",
     ativo_id: str = "",
     limite: int = 200,
@@ -404,13 +329,19 @@ def listar_riscos(
     cli: RiscoClient | None = RiscoDep,
 ):
     tenant = str(utilizador.empresa_id)
-    return _executar(_cliente(cli).listar, tenant, estado, ativo_id, limite, offset)
+    return _executar(
+        cliente_ou_503(cli).listar, tenant, estado, ativo_id, limite, offset,
+        contexto_nucleo.maturidades_dos_controlos(db, utilizador.empresa_id),
+    )
 
 
 @router.get("/painel", summary="Indicadores + matriz de risco")
-def obter_painel(utilizador: CurrentUserDep, cli: RiscoClient | None = RiscoDep):
+def obter_painel(utilizador: CurrentUserDep, db: SessionDep, cli: RiscoClient | None = RiscoDep):
     tenant = str(utilizador.empresa_id)
-    return _executar(_cliente(cli).obter_painel, tenant)
+    return _executar(
+        cliente_ou_503(cli).obter_painel, tenant,
+        contexto_nucleo.maturidades_dos_controlos(db, utilizador.empresa_id),
+    )
 
 
 @router.get("/atencao", summary="Painel 'A precisar de atenção' (alertas agregados)")
@@ -418,7 +349,7 @@ def obter_atencao(
     request: Request, utilizador: CurrentUserDep, cli: RiscoClient | None = RiscoDep
 ):
     tenant = str(utilizador.empresa_id)
-    return _executar(_cliente(cli).obter_atencao, tenant, _locale(request))
+    return _executar(cliente_ou_503(cli).obter_atencao, tenant, locale_do_pedido(request))
 
 
 @router.get("/documentos/{tipo}", summary="Gerar documento-evidência (payload localizado)")
@@ -433,7 +364,10 @@ def gerar_documento(
     from app.shared.dependencies import get_empresa_ativa
 
     tenant = str(utilizador.empresa_id)
-    doc = _executar(_cliente(cli).gerar_documento, tenant, tipo, _locale(request))
+    doc = _executar(
+        cliente_ou_503(cli).gerar_documento, tenant, tipo, locale_do_pedido(request),
+        contexto_nucleo.maturidades_dos_controlos(db, utilizador.empresa_id),
+    )
     # Enriquecer com hash estável + controlo-alvo para o "anexar como evidência".
     return enriquecer_documento(db, get_empresa_ativa(db, utilizador), doc)
 
@@ -441,7 +375,7 @@ def gerar_documento(
 @router.get("/definicoes", summary="Apetite ao risco + periodicidades")
 def obter_definicoes(utilizador: CurrentUserDep, cli: RiscoClient | None = RiscoDep):
     tenant = str(utilizador.empresa_id)
-    return _executar(_cliente(cli).obter_definicoes, tenant)
+    return _executar(cliente_ou_503(cli).obter_definicoes, tenant)
 
 
 @router.get("/riscos/{risco_id}", summary="Ficha de um risco (com tratamentos + residual)")
@@ -453,8 +387,8 @@ def obter_risco(
     cli: RiscoClient | None = RiscoDep,
 ):
     tenant = str(utilizador.empresa_id)
-    maturidades = _maturidades(db, utilizador.empresa_id)
-    risco = _executar(_cliente(cli).obter, tenant, risco_id, maturidades)
+    maturidades = contexto_nucleo.maturidades_dos_controlos(db, utilizador.empresa_id)
+    risco = _executar(cliente_ou_503(cli).obter, tenant, risco_id, maturidades)
     # Cada tratamento diz a que controlo está ligado (código e título, para
     # todos) e se quem pede o vê no módulo de controlos. Os dois ids servem,
     # como no mapa de maturidades; vazio ou desconhecido fica sem código.
@@ -462,14 +396,14 @@ def obter_risco(
     ids = {
         uid
         for t in tratamentos
-        if (uid := _uuid_ou_none(t.get("controlo_id") or "")) is not None
+        if (uid := uuid_ou_none(t.get("controlo_id") or "")) is not None
     }
     por_id: dict[uuid.UUID, ControloCitado] = {}
     for citado in _controlos_citados(db, utilizador, request, ids=ids):
         por_id[citado.control_id] = citado
         por_id[citado.controlo_empresa_id] = citado
     for t in tratamentos:
-        uid = _uuid_ou_none(t.get("controlo_id") or "")
+        uid = uuid_ou_none(t.get("controlo_id") or "")
         citado = por_id.get(uid) if uid is not None else None
         t["controlo_codigo"] = citado.codigo if citado else None
         t["controlo_titulo"] = citado.titulo if citado else None
@@ -480,7 +414,7 @@ def obter_risco(
 @router.get("/riscos/{risco_id}/avaliacoes", summary="Histórico de avaliações")
 def listar_avaliacoes(risco_id: str, utilizador: CurrentUserDep, cli: RiscoClient | None = RiscoDep):
     tenant = str(utilizador.empresa_id)
-    return _executar(_cliente(cli).listar_avaliacoes, tenant, risco_id)
+    return _executar(cliente_ou_503(cli).listar_avaliacoes, tenant, risco_id)
 
 
 @router.get("/riscos/{risco_id}/procedencia", summary="O que as importações mudaram neste risco")
@@ -512,8 +446,14 @@ def guardar_definicoes(
     cli: RiscoClient | None = RiscoDep,
 ):
     tenant = str(utilizador.empresa_id)
+    c = cliente_ou_503(cli)
+    # O sidecar grava o conjunto inteiro, e um sidecar mais antigo lê um número em
+    # falta como 0 e recusa-o. Por isso o pedido leva sempre as definições todas:
+    # as que ficaram (com as omissões, que são do sidecar) mais o que veio no corpo.
+    atuais = _executar(c.obter_definicoes, tenant)
+    alteracoes = {k: v for k, v in dados.model_dump(exclude_unset=True).items() if v is not None}
     resultado = _executar(
-        _cliente(cli).guardar_definicoes, tenant, dados.model_dump(),
+        c.guardar_definicoes, tenant, fundir_alteracoes(atuais, alteracoes),
         # Definir o apetite ao risco é governação, e é do órgão de gestão. O ator
         # tem de ir descrito por essa classe: pela de operação, o CEO — que
         # governa mas não opera — chegaria ao sidecar como "atribuido" e seria
@@ -527,7 +467,8 @@ def guardar_definicoes(
         empresa_id=utilizador.empresa_id,
         utilizador_id=utilizador.id,
         entidade_tipo="DefinicoesRisco",
-        dados_novos=dados.model_dump(),
+        # O apetite que ficou, com as omissões do sidecar, e não o que veio no pedido.
+        dados_novos=resultado,
         request=request,
     )
     return resultado
@@ -560,7 +501,7 @@ def criar_risco(
     payload["dono_nome"] = dono_nome
 
     resultado = _executar(
-        _cliente(cli).guardar, tenant, payload, "", ator_de(utilizador, "risco"),
+        cliente_ou_503(cli).guardar, tenant, payload, "", ator_de(utilizador, "risco"),
         utilizador=utilizador,
     )
     registar_acao(
@@ -569,7 +510,7 @@ def criar_risco(
         empresa_id=utilizador.empresa_id,
         utilizador_id=utilizador.id,
         entidade_tipo="Risco",
-        entidade_id=_uuid_ou_none(resultado.get("id", "")),
+        entidade_id=uuid_ou_none(resultado.get("id", "")),
         dados_novos=payload,
         request=request,
     )
@@ -580,7 +521,7 @@ def criar_risco(
             empresa_id=utilizador.empresa_id,
             utilizador_id=utilizador.id,
             entidade_tipo="Risco",
-            entidade_id=_uuid_ou_none(resultado.get("id", "")),
+            entidade_id=uuid_ou_none(resultado.get("id", "")),
             # O título do RISCO tem de ir: sem ele o registo guardava só o nome
             # do novo dono, e lia-se como se a ação fosse sobre a pessoa.
             dados_novos={
@@ -605,7 +546,7 @@ def atualizar_risco(
     tenant = str(utilizador.empresa_id)
     # Estado atual do sidecar: necessário para detetar mudança de dono
     # (delegação) sem confiar no cliente. Custo de 1 RPC extra aceite.
-    atual = _executar(_cliente(cli).obter, tenant, risco_id, None)
+    atual = _executar(cliente_ou_503(cli).obter, tenant, risco_id, None)
     dono_id, dono_nome, mudou = resolver_pessoa(
         db,
         utilizador,
@@ -621,7 +562,7 @@ def atualizar_risco(
     payload["dono_nome"] = dono_nome
 
     resultado = _executar(
-        _cliente(cli).guardar, tenant, payload, risco_id, ator_de(utilizador, "risco"),
+        cliente_ou_503(cli).guardar, tenant, payload, risco_id, ator_de(utilizador, "risco"),
         utilizador=utilizador,
     )
     registar_acao(
@@ -630,7 +571,7 @@ def atualizar_risco(
         empresa_id=utilizador.empresa_id,
         utilizador_id=utilizador.id,
         entidade_tipo="Risco",
-        entidade_id=_uuid_ou_none(risco_id),
+        entidade_id=uuid_ou_none(risco_id),
         dados_novos=payload,
         request=request,
     )
@@ -641,7 +582,7 @@ def atualizar_risco(
             empresa_id=utilizador.empresa_id,
             utilizador_id=utilizador.id,
             entidade_tipo="Risco",
-            entidade_id=_uuid_ou_none(risco_id),
+            entidade_id=uuid_ou_none(risco_id),
             # O título do RISCO tem de ir: sem ele o registo guardava só o nome
             # do novo dono, e lia-se como se a ação fosse sobre a pessoa.
             dados_novos={
@@ -668,8 +609,10 @@ def eliminar_risco(
     cli: RiscoClient | None = RiscoDep,
 ):
     tenant = str(utilizador.empresa_id)
+    # O título lê-se antes: depois de apagado, já não há onde o ir buscar.
+    titulo = _titulo_do_risco(cli, tenant, risco_id)
     _executar(
-        _cliente(cli).eliminar, tenant, risco_id,
+        cliente_ou_503(cli).eliminar, tenant, risco_id,
         ator_de(utilizador, "risco", ClasseAcao.ELIMINAR),
         utilizador=utilizador,
     )
@@ -679,7 +622,8 @@ def eliminar_risco(
         empresa_id=utilizador.empresa_id,
         utilizador_id=utilizador.id,
         entidade_tipo="Risco",
-        entidade_id=_uuid_ou_none(risco_id),
+        entidade_id=uuid_ou_none(risco_id),
+        dados_novos={"titulo": titulo},
         request=request,
     )
 
@@ -700,7 +644,7 @@ def reavaliar(
     tenant = str(utilizador.empresa_id)
     ator = ator_de(utilizador, "risco")
     resultado = _executar(
-        _cliente(cli).reavaliar, tenant, risco_id, dados.model_dump(), ator["id"], ator["nome"], ator,
+        cliente_ou_503(cli).reavaliar, tenant, risco_id, dados.model_dump(), ator["id"], ator["nome"], ator,
         utilizador=utilizador,
     )
     registar_acao(
@@ -709,7 +653,7 @@ def reavaliar(
         empresa_id=utilizador.empresa_id,
         utilizador_id=utilizador.id,
         entidade_tipo="Risco",
-        entidade_id=_uuid_ou_none(risco_id),
+        entidade_id=uuid_ou_none(risco_id),
         dados_novos=dados.model_dump(),
         request=request,
     )
@@ -747,7 +691,7 @@ def criar_tratamento(
     payload["responsavel_nome"] = resp_nome
 
     resultado = _executar(
-        _cliente(cli).guardar_tratamento, tenant, risco_id, payload, "",
+        cliente_ou_503(cli).guardar_tratamento, tenant, risco_id, payload, "",
         # A mesma classe que autorizou o pedido descreve o ator: aceitar um risco
         # é governação, os restantes tratamentos são operação.
         ator_de(utilizador, "risco", _classe_para_tratamento(dados.tipo)),
@@ -759,7 +703,7 @@ def criar_tratamento(
         empresa_id=utilizador.empresa_id,
         utilizador_id=utilizador.id,
         entidade_tipo="Tratamento",
-        entidade_id=_uuid_ou_none(resultado.get("id", "")),
+        entidade_id=uuid_ou_none(resultado.get("id", "")),
         dados_novos={
             "titulo": _titulo_do_risco(cli, tenant, risco_id),
             **payload,
@@ -783,11 +727,8 @@ def atualizar_tratamento(
     tenant = str(utilizador.empresa_id)
     # Aceitação de risco é governação — tanto passar a "aceitar" como reverter
     # uma aceitação existente. Lê o estado atual para cobrir os dois sentidos.
-    atual = _executar(_cliente(cli).obter, tenant, risco_id, None)
-    tipo_atual = next(
-        (t.get("tipo", "") for t in atual.get("tratamentos", []) if t.get("id") == trat_id),
-        "",
-    )
+    atual = _executar(cliente_ou_503(cli).obter, tenant, risco_id, None)
+    tipo_atual = _tratamento_do_risco(atual, trat_id).get("tipo", "")
     _exigir_capacidade(utilizador, _classe_para_tratamento(dados.tipo, tipo_atual), request)
     # Sem isto havia porta lateral: criar como "mitigar" com descrição vazia e
     # depois mudar o tipo para "aceitar" — o gate de governação apanhava a
@@ -803,7 +744,7 @@ def atualizar_tratamento(
     payload["responsavel_nome"] = resp_nome
 
     resultado = _executar(
-        _cliente(cli).guardar_tratamento, tenant, risco_id, payload, trat_id,
+        cliente_ou_503(cli).guardar_tratamento, tenant, risco_id, payload, trat_id,
         # Cobre os dois sentidos, como o gate acima: passar a "aceitar" e
         # reverter uma aceitação são ambos decisão de gestão.
         ator_de(utilizador, "risco", _classe_para_tratamento(dados.tipo, tipo_atual)),
@@ -815,7 +756,7 @@ def atualizar_tratamento(
         empresa_id=utilizador.empresa_id,
         utilizador_id=utilizador.id,
         entidade_tipo="Tratamento",
-        entidade_id=_uuid_ou_none(trat_id),
+        entidade_id=uuid_ou_none(trat_id),
         # O risco já foi lido acima para a verificação de permissões — o título
         # vem daí, sem custar uma segunda ida ao sidecar.
         dados_novos={"titulo": atual.get("titulo"), **payload, "risco_id": risco_id},
@@ -840,11 +781,8 @@ def eliminar_tratamento(
     tenant = str(utilizador.empresa_id)
     # Eliminar uma aceitação desfaz a decisão do órgão de gestão: exige GOVERNAR,
     # como criá-la ou revertê-la. Lê-se o tipo do tratamento para saber se é o caso.
-    atual = _executar(_cliente(cli).obter, tenant, risco_id, None)
-    tipo_atual = next(
-        (t.get("tipo", "") for t in atual.get("tratamentos", []) if t.get("id") == trat_id),
-        "",
-    )
+    atual = _executar(cliente_ou_503(cli).obter, tenant, risco_id, None)
+    tipo_atual = _tratamento_do_risco(atual, trat_id).get("tipo", "")
     # Dois caminhos. Quem tem `risco.eliminar` apaga como sempre, e o ator vai
     # descrito pela ELIMINAÇÃO: um papel a quem a empresa deu `eliminar` sem
     # `operar` total chegava ao sidecar como "atribuido" e era recusado na ação
@@ -863,7 +801,7 @@ def eliminar_tratamento(
     if tipo_atual == "aceitar":
         _exigir_capacidade(utilizador, ClasseAcao.GOVERNAR, request)
     _executar(
-        _cliente(cli).eliminar_tratamento, tenant, trat_id,
+        cliente_ou_503(cli).eliminar_tratamento, tenant, risco_id, trat_id,
         ator_de(utilizador, "risco", classe_ator),
         utilizador=utilizador,
     )
@@ -873,7 +811,7 @@ def eliminar_tratamento(
         empresa_id=utilizador.empresa_id,
         utilizador_id=utilizador.id,
         entidade_tipo="Tratamento",
-        entidade_id=_uuid_ou_none(trat_id),
+        entidade_id=uuid_ou_none(trat_id),
         # É o registo mais importante de todos para ter nome: o tratamento
         # deixou de existir, e sem o título do risco não há como saber a que
         # se referia.

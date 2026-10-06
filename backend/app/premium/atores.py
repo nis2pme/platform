@@ -18,6 +18,18 @@ from app.shared.capacidades import Ambito, ClasseAcao, ambito_de
 from app.shared.pii import decifrar_pii
 
 
+# Teto, em caracteres, do nome de uma pessoa (responsável, dono, avaliador): o do
+# sidecar, que recusa o que passar. O nome de uma conta não tem teto no núcleo, por
+# isso corta-se aqui, onde é lido, para que um nome longo não impeça a pessoa de
+# avaliar, rever ou ser indicada.
+TETO_NOME_PESSOA = 200
+
+
+def nome_da_conta(utilizador: Utilizador) -> str:
+    """O nome de uma conta, decifrado e dentro do teto dos nomes de pessoa."""
+    return (decifrar_pii(utilizador.nome) or "")[:TETO_NOME_PESSOA]
+
+
 def negar_capacidade(
     utilizador, modulo: str, classe: ClasseAcao, request=None
 ) -> HTTPException:
@@ -73,7 +85,7 @@ def ator_de(
     ambito = ambito_de(utilizador, modulo, classe)
     return {
         "id": str(utilizador.id),
-        "nome": decifrar_pii(utilizador.nome) or "",
+        "nome": nome_da_conta(utilizador),
         "ambito": (ambito or Ambito.ATRIBUIDO).value,
     }
 
@@ -93,7 +105,8 @@ def resolver_pessoa(
       - pessoa_id preenchido → tem de ser um utilizador ATIVO do MESMO tenant;
         o nome é lido da base de dados (o valor do cliente é ignorado).
       - pessoa_id vazio + nome preenchido → pessoa externa sem conta na app
-        (caso legítimo em PME); o nome livre é aceite.
+        (caso legítimo em PME); o nome livre é aceite, cortado ao teto dos nomes
+        de pessoa, salvo se for o que já está guardado, que fica como está.
       - ambos vazios → na criação (atual_id is None) atribui o próprio utilizador;
         na atualização significa "sem responsável".
       - mudou → a atribuição difere da atual; o caller exige a capacidade
@@ -119,16 +132,21 @@ def resolver_pessoa(
                 detail={"codigo": "pessoa_invalida"},
             )
         id_final = str(alvo.id)
-        nome_final = decifrar_pii(alvo.nome) or ""
+        nome_final = nome_da_conta(alvo)
     elif pessoa_nome:
         # Pessoa externa: sem conta, nome livre. Nunca satisfaz o âmbito
         # "atribuido" de um implementador (não há id para coincidir).
         id_final = ""
-        nome_final = pessoa_nome.strip()[:200]
+        nome_final = pessoa_nome.strip()
+        # O teto só vale para um nome novo. Quem edita outro campo devolve o nome
+        # que já lá estava, e uma ficha anterior ao teto não pode ser cortada, nem
+        # contar como mudança de responsável, por isso.
+        if not (atual_id == "" and nome_final == (atual_nome or "")):
+            nome_final = nome_final[:TETO_NOME_PESSOA]
     elif atual_id is None:
         # Criação sem indicação → o próprio utilizador fica responsável.
         id_final = str(utilizador.id)
-        nome_final = decifrar_pii(utilizador.nome) or ""
+        nome_final = nome_da_conta(utilizador)
     else:
         # Atualização com campos vazios → fica sem responsável.
         id_final = ""

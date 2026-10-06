@@ -13,20 +13,10 @@ from functools import lru_cache
 
 from app.config import get_settings
 from app.premium.client import ClienteSidecar
+from app.premium.conversao import ator_pb, documento_to_dict
 
 
 # ── Conversões protobuf → dict (o router devolve dicts; o frontend consome JSON) ──
-
-def _ator_pb(premium_pb2, ator: dict | None):
-    """Constrói a message Ator (identidade de quem age) para os RPCs de escrita.
-    None → campo ausente (o sidecar trata como âmbito total)."""
-    if not ator:
-        return None
-    return premium_pb2.Ator(
-        id=ator.get("id", ""),
-        nome=ator.get("nome", ""),
-        ambito=ator.get("ambito", ""),
-    )
 
 
 def _opcao_to_dict(pb) -> dict:
@@ -37,7 +27,6 @@ def _campo_to_dict(pb) -> dict:
     return {
         "chave": pb.chave,
         "tipo_dado": pb.tipo_dado,
-        "obrigatorio": pb.obrigatorio,
         "label": pb.label,
         "ajuda": pb.ajuda,
         "opcoes": [_opcao_to_dict(o) for o in pb.opcoes],
@@ -90,24 +79,7 @@ def _ativo_to_dict(pb) -> dict:
         "fonte_tipo": pb.fonte_tipo or None,
         "sincronizado_em": pb.sincronizado_em or None,
         "estado_origem": pb.estado_origem or "presente",
-    }
-
-
-def _documento_to_dict(pb) -> dict:
-    return {
-        "titulo": pb.titulo,
-        "subtitulo": pb.subtitulo,
-        "data_geracao": pb.data_geracao,
-        "controlos": list(pb.controlos),
-        "secoes": [
-            {
-                "titulo": s.titulo,
-                "texto": s.texto,
-                "cabecalho": list(s.cabecalho),
-                "linhas": [list(l.celulas) for l in s.linhas],
-            }
-            for s in pb.secoes
-        ],
+        "tipo_por_confirmar": pb.tipo_por_confirmar,
     }
 
 
@@ -172,7 +144,7 @@ class InventarioClient(ClienteSidecar):
             localizacao=dados.get("localizacao", ""),
             estado=dados.get("estado", "em_uso"),
             atributos=dados.get("atributos") or {},
-            ator=_ator_pb(premium_pb2, ator),
+            ator=ator_pb(premium_pb2, ator),
         )
         return _ativo_to_dict(self._ensure_stub().GuardarAtivo(pb))
 
@@ -183,7 +155,7 @@ class InventarioClient(ClienteSidecar):
 
         self._ensure_stub().EliminarAtivo(
             premium_pb2.AtivoRef(
-                tenant_id=tenant_id, id=ativo_id, ator=_ator_pb(premium_pb2, ator)
+                tenant_id=tenant_id, id=ativo_id, ator=ator_pb(premium_pb2, ator)
             )
         )
 
@@ -203,7 +175,7 @@ class InventarioClient(ClienteSidecar):
             valor_negocio=int(dados.get("valor_negocio", 0)),
             criticidade_manual=dados.get("criticidade_manual", ""),
             justificacao=dados.get("justificacao", ""),
-            ator=_ator_pb(premium_pb2, ator),
+            ator=ator_pb(premium_pb2, ator),
         )
         return _ativo_to_dict(self._ensure_stub().ClassificarCriticidade(pb))
 
@@ -217,7 +189,7 @@ class InventarioClient(ClienteSidecar):
                 tenant_id=tenant_id,
                 ativo_id=ativo_id,
                 depende_de=depende_de,
-                ator=_ator_pb(premium_pb2, ator),
+                ator=ator_pb(premium_pb2, ator),
             )
         )
 
@@ -237,7 +209,7 @@ class InventarioClient(ClienteSidecar):
                 ativo_ids=ativo_ids,
                 revisto_por_id=por_id,
                 revisto_por_nome=por_nome,
-                ator=_ator_pb(premium_pb2, ator),
+                ator=ator_pb(premium_pb2, ator),
             )
         )
 
@@ -263,7 +235,7 @@ class InventarioClient(ClienteSidecar):
                 responsavel_nome=por_nome,
                 data=data,
                 nota=nota,
-                ator=_ator_pb(premium_pb2, ator),
+                ator=ator_pb(premium_pb2, ator),
             )
         )
 
@@ -281,7 +253,7 @@ class InventarioClient(ClienteSidecar):
         resp = self._ensure_stub().GerarDocumento(
             premium_pb2.DocumentoReq(tenant_id=tenant_id, tipo=tipo, locale=locale)
         )
-        return _documento_to_dict(resp)
+        return documento_to_dict(resp)
 
 
 @lru_cache

@@ -29,8 +29,10 @@ from app.config import get_settings
 from app.empresas.models import Empresa
 from app.evidencias import ligacoes
 from app.evidencias.models import Evidencia, TipoEvidencia
+from app.frameworks.runtime import nivel_qnrcs_efetivo
 from app.notificacoes.catalogo import Codigo
 from app.notificacoes.service import criar_notificacao
+from app.premium import contexto_nucleo
 from app.premium.conetor_client import FEATURES_CONETORES
 from app.premium.conetor_models import ConetorCursor
 from app.shared.audit import Acao, registar_acao
@@ -192,10 +194,12 @@ def _reavaliar_observacoes(db: Session, cli, empresa: Empresa) -> None:
     Fail-soft: se falhar, o resto do ciclo segue — perder uma reavaliação atrasa
     um aviso um ciclo; perder o ciclo inteiro atrasava todos os eventos.
     """
-    from app.premium.conetor_router import _declaracoes, _perfil_qnrcs
-
     try:
-        cli.reavaliar_observacoes(str(empresa.id), _perfil_qnrcs(empresa), _declaracoes(db, empresa))
+        cli.reavaliar_observacoes(
+            str(empresa.id),
+            nivel_qnrcs_efetivo(empresa),
+            contexto_nucleo.declaracoes_dos_controlos(db, empresa),
+        )
     except Exception:  # noqa: BLE001 — ver docstring
         logger.warning(
             "Verificações: reavaliação da empresa %s falhou; segue.",
@@ -281,6 +285,15 @@ def _evidencia_automatica(db: Session, empresa: Empresa, constatacoes: list[dict
             por_controlo.setdefault(code, []).append(s)
     if not por_controlo:
         return 0
+    if not all(s.get("corpo_evidencia_json") for lista in por_controlo.values() for s in lista):
+        # O corpo de cada sinal vem do sidecar. Um sidecar mais antigo não o manda,
+        # e montá-lo aqui com outra mão mudava o conteúdo (e o hash que evita as
+        # cópias): espera-se pela atualização, que retoma sem perder nada.
+        logger.warning(
+            "Verificações: o sidecar da empresa %s não manda o corpo da evidência; captura adiada.",
+            empresa.id,
+        )
+        return 0
 
     por_codigo = _controlos_por_codigo(db, empresa)
     nao_aplicaveis = _codigos_nao_aplicaveis(db, empresa)
@@ -309,7 +322,7 @@ def _evidencia_automatica(db: Session, empresa: Empresa, constatacoes: list[dict
             # dia da atualização.
             "origem": "conetor_m365" if so_em_linha else "conetores",
             "controlo": code,
-            "sinais": [_sinal_para_evidencia(s) for s in sinais],
+            "sinais": [json.loads(s["corpo_evidencia_json"]) for s in sinais],
         }
         texto = json.dumps(corpo, ensure_ascii=False, sort_keys=True, indent=2)
         conteudo_hash = hashlib.sha256(texto.encode("utf-8")).hexdigest()
@@ -363,37 +376,3 @@ def _ordem_do_sinal(sinal: dict) -> tuple:
     # A ligação em linha primeiro e, dentro de cada fonte, por nome — com uma
     # só fonte fica a ordem de sempre (por nome).
     return (_fonte(sinal) != _FONTE_DO_FORMATO_ORIGINAL, _fonte(sinal), sinal.get("sinal", ""))
-
-
-def _sinal_para_evidencia(s: dict) -> dict:
-    item = {
-        "sinal": s.get("sinal"),
-        "veredicto_minimo": s.get("veredicto_minimo"),
-        "veredicto_politica": s.get("veredicto_politica"),
-        "razao": s.get("razao") or "",
-        "resumo": _resumo_estavel(s),
-    }
-    if _fonte(s) != _FONTE_DO_FORMATO_ORIGINAL:
-        # A evidência diz de onde veio: um relatório carregado não é uma leitura
-        # em linha, e quem a avalia tem de o saber.
-        item["fonte"] = _fonte(s)
-    return item
-
-
-# Chaves do resumo que mudam sem o estado mudar. A idade de um relatório cresce
-# um dia por dia; deixá-la no conteúdo mudava o hash e anexava uma evidência
-# nova todos os dias com o mesmo veredicto. A data de origem fica, e a idade
-# tira-se dela.
-_CHAVES_VOLATEIS = ("dias",)
-
-
-def _resumo_estavel(sinal: dict) -> dict:
-    try:
-        resumo = json.loads(sinal.get("resumo_json") or "{}")
-    except ValueError:
-        return {}
-    if not isinstance(resumo, dict):
-        return {}
-    for chave in _CHAVES_VOLATEIS:
-        resumo.pop(chave, None)
-    return resumo

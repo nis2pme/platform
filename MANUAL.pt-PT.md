@@ -253,19 +253,27 @@ docker compose up -d
 
 ### Actualizar para nova versão
 
-```bash
-# Puxar as imagens mais recentes do GHCR e reiniciar
-docker compose pull
-docker compose up -d
-```
-
-Ou simplesmente voltar a correr o instalador, que faz o mesmo (mantém o `.env` existente):
+O caminho recomendado é voltar a correr o instalador: mantém o `.env`, atualiza o `docker-compose.yml`, faz um backup antes de mexer nas imagens e espera que a aplicação fique operacional.
 
 ```bash
-sh start_nis2pme.sh
+curl -fsSL https://raw.githubusercontent.com/nis2pme/platform/main/start_nis2pme.sh | sudo sh
 ```
+
+(ou `sh start_nis2pme.sh`, se já tiver o instalador descarregado). Se a pasta de instalação foi criada com `sudo`, corra-o também com `sudo`.
+
+> `docker compose pull && docker compose up -d` também puxa as imagens, mas não atualiza o `docker-compose.yml` nem faz o backup de antes: só serve quando a versão nova não muda o compose.
 
 > As migrações de base de dados são aplicadas automaticamente no arranque (`alembic upgrade head`).
+
+#### Atualizar pelo interface (opcional)
+
+Num servidor Linux com systemd, o administrador pode atualizar a partir de **Definições → Atualizações**, sem terminal. O instalador instala o agente por omissão quando corre como root (`sudo`) num servidor com systemd; para o instalar numa instalação que já existe, ou se o instalador correu sem `sudo`, corra-o uma vez no servidor:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nis2pme/platform/main/start_nis2pme.sh | sudo sh -s -- --agente
+```
+
+Instala um agente (unidade systemd, sem porta de rede, e sem dar a nenhum contentor acesso ao Docker) que só aplica versões **assinadas pela NIS2PME**: confere a assinatura e o resumo de cada ficheiro antes de executar o que quer que seja. Quando há uma versão nova, o botão «Atualizar agora» pede a sua password, faz o backup, atualiza e mostra o progresso; se a versão nova não arrancar e a base de dados não tiver mudado, a anterior é reposta sozinha. A aplicação fica indisponível 1 a 3 minutos. Para retirar o agente: `sudo /usr/local/lib/nis2pme/nis2pme-agente.sh --desinstalar`. Sem o agente, o ecrã mostra o comando acima. Para não o instalar, use `--sem-agente`.
 
 ### Backups embutidos (recomendado)
 

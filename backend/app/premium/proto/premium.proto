@@ -186,6 +186,10 @@ message MetaContexto {
   // Chave de idempotência gerada pelo CORE. Reenvio com a mesma chave → o sidecar
   // devolve o job existente, sem trabalho novo.
   string idempotency_key = 7;
+  // Quem pediu a análise (UUID do utilizador no core, opaco para o servidor). O
+  // servidor guarda-o com o job e devolve-o, para a auditoria da conclusão ser
+  // atribuída a quem pediu e não a quem a observou primeiro.
+  string pedido_por = 8;
   // NOTA RGPD: o payload de evidências PODE conter PII — regido por DPA.
 }
 
@@ -220,6 +224,8 @@ message AnaliseJob {
   // True apenas na resposta a ObterAnalisePorControlo com reclamar_auditoria: indica
   // que ESTE chamador ganhou o direito/dever de registar a auditoria de conclusão.
   bool auditoria_pendente = 9;
+  // Quem pediu a análise (o `pedido_por` do MetaContexto); vazio nos jobs de antes.
+  string pedido_por = 10;
 }
 
 // Relatório estruturado da análise de gaps.
@@ -253,8 +259,8 @@ service InventarioService {
   rpc EliminarAtivo       (AtivoRef)        returns (InventarioVazio);
   rpc DefinirDependencias (DependenciasReq) returns (InventarioVazio);
   // Assistente de criticidade: respostas/dimensões → classe derivada +
-  // propagação pelo grafo de dependências + explicação localizada. A metodologia
-  // (fórmula/pesos) vive no sidecar compilado — é IP; a UI só mostra o resultado.
+  // propagação pelo grafo de dependências + explicação localizada. A classe é
+  // calculada no sidecar; a UI só mostra o resultado.
   rpc ClassificarCriticidade (ClassificarReq) returns (Ativo);
   rpc RegistarRevisao     (RevisaoReq)      returns (InventarioVazio);
   // Sanitização no abate (ID.GA-8): regista método/data/responsável e põe o ativo
@@ -270,7 +276,14 @@ service InventarioService {
 // gera o ficheiro (PDF/CSV) com o jspdf já existente. Estrutura genérica: cada
 // documento é uma lista de secções, cada secção com prosa e/ou uma tabela.
 
-message DocumentoReq { string tenant_id = 1; string tipo = 2; string locale = 3; }
+message DocumentoReq {
+  string tenant_id = 1;
+  string tipo = 2;
+  string locale = 3;
+  // Só nos documentos do risco: controlo → nível de maturidade (do core), para
+  // o risco residual. Vazio = sem residual.
+  map<string, string> maturidade_controlos = 4;
+}
 message LinhaDoc { repeated string celulas = 1; }
 message SecaoDoc {
   string titulo = 1;
@@ -291,8 +304,13 @@ message Documento {
 // O core deriva o `ambito` do papel do utilizador (o servidor NÃO conhece papéis):
 //   "total"     → escreve qualquer registo do tenant (gestão)
 //   "atribuido" → só escreve registos de que é dono/responsável (delegado)
-// Campo ausente ou ambito "total" = sem restrição (compatibilidade com clientes
-// antigos; o canal é interno com mTLS). Violação de âmbito → PERMISSION_DENIED.
+// O `Ator` é obrigatório em todas as escritas: sem ele, ou com um âmbito que não
+// seja um destes dois, o servidor responde FAILED_PRECONDITION (nunca assume âmbito
+// total). Violação de âmbito → PERMISSION_DENIED.
+// Exceções, sem âmbito do lado do servidor (a autorização é toda do core, porque as
+// ligações são só da administração): as execuções agendadas dos conetores
+// (`ExecutarVerificacao` sem ator = execução agendada) e as escritas do tick
+// (`ReavaliarObservacoes`).
 
 message Ator {
   string id = 1;       // UUID do utilizador do core (opaco para o servidor)
@@ -333,7 +351,7 @@ message Ativo {
   string responsavel_nome = 7;       // nome em cache / "outra pessoa"
   string localizacao = 8;
   string estado = 9;                 // ciclo de vida
-  // Entrada de criticidade (1-4; 0 = não respondido). A classe é derivada no F2.
+  // Entrada de criticidade (1-4; 0 = não respondido). A classe é derivada no sidecar.
   int32 confidencialidade = 10;
   int32 integridade = 11;
   int32 disponibilidade = 12;
@@ -366,6 +384,9 @@ message Ativo {
   string fonte_tipo = 30;          // "glpi" | "monarc" | "csv_generico" | ...
   string sincronizado_em = 31;     // RFC3339 da última vez que entrou
   string estado_origem = 32;       // "presente" | "ausente" (deixou de constar)
+  // Veio de uma leitura técnica sem tipo declarado: o tipo é um palpite até alguém
+  // gravar a ficha.
+  bool tipo_por_confirmar = 33;
 }
 
 message ListarAtivosReq {
@@ -442,7 +463,7 @@ message PainelInventario {
   int32 total = 1;
   int32 criticos = 2;                // criticidade = "alto"
   int32 por_rever = 3;               // sem revisão dentro do período
-  int32 alertas = 4;                 // reservado
+  int32 alertas = 4;                 // ativos com algo a corrigir (sem responsável, sem criticidade ou por rever)
   repeated ContagemTipo por_tipo = 5;
 }
 
@@ -452,12 +473,12 @@ message PainelInventario {
 // Nível de risco = probabilidade × impacto (1-25), DERIVADO no sidecar (não é
 // fonte de verdade). Reavaliar cria uma entrada no histórico versionado (nunca
 // substitui). O tratamento liga-se a um controlo do core (UUID opaco); o risco
-// residual (por maturidade do controlo) chega no F2.
+// residual (por maturidade do controlo) é calculado no sidecar.
 // =============================================================================
 
 service RiscoService {
   // Catálogo de cenários de risco por tipo de ativo ("o que pode correr mal") —
-  // servido pelo sidecar (é IP/metodologia). Cada cenário carrega a ameaça +
+  // servido pelo sidecar. Cada cenário carrega a ameaça +
   // vulnerabilidade formais e a tipologia do ID.AR-3. A UI mostra os cartões.
   rpc ListarCenarios     (CenariosReq)     returns (ListaCenarios);
   rpc ListarRiscos       (ListarRiscosReq) returns (ListaRiscos);
@@ -481,13 +502,15 @@ service RiscoService {
 message DefinicoesReq { string tenant_id = 1; }
 message Definicoes {
   string tenant_id = 1;
-  int32 limiar_tratar = 2;            // nível a partir do qual é obrigatório tratar
-  int32 limiar_urgente = 3;           // nível a partir do qual é urgente + informar gerência
+  // Os números têm presença: um valor não enviado é diferente de 0. No
+  // GuardarDefinicoes, o que não vem leva o valor por omissão do servidor.
+  optional int32 limiar_tratar = 2;            // nível a partir do qual é obrigatório tratar
+  optional int32 limiar_urgente = 3;           // nível a partir do qual é urgente + informar gerência
   string aprovador = 4;               // quem aprovou o apetite
   string data_aprovacao = 5;          // YYYY-MM-DD ou vazio
-  int32 periodicidade_altos = 6;      // meses entre reavaliações (altos/críticos)
-  int32 periodicidade_moderados = 7;
-  int32 periodicidade_baixos = 8;
+  optional int32 periodicidade_altos = 6;      // meses entre reavaliações (altos/críticos)
+  optional int32 periodicidade_moderados = 7;
+  optional int32 periodicidade_baixos = 8;
   Ator ator = 9;                      // só no GuardarDefinicoes
 }
 
@@ -559,7 +582,7 @@ message Risco {
   bool por_reavaliar = 28;
 }
 
-// ── Catálogo de cenários de risco (IP; servido pelo sidecar) ─────────────────
+// ── Catálogo de cenários de risco (servido pelo sidecar) ─────────────────────
 
 message CenariosReq { string tenant_id = 1; string tipo = 2; string locale = 3; }
 message Cenario {
@@ -583,6 +606,8 @@ message ListarRiscosReq {
   string ativo_id = 3;           // filtro ("" = todos)
   int32 limite = 4;
   int32 offset = 5;
+  // Controlo → nível de maturidade (do core): com ele, cada risco sai com o residual.
+  map<string, string> maturidade_controlos = 6;
 }
 message ListaRiscos {
   repeated Risco riscos = 1;
@@ -601,6 +626,9 @@ message TratamentoRef {
   string tenant_id = 1;
   string id = 2;
   Ator ator = 3;                 // só relevante no EliminarTratamento
+  // Risco a que o tratamento pertence. Obrigatório no EliminarTratamento: um
+  // tratamento só se elimina pelo seu risco (o servidor confere o par).
+  string risco_id = 4;
 }
 message RiscoVazio {}
 
@@ -629,7 +657,10 @@ message Avaliacao {
 }
 message ListaAvaliacoes { repeated Avaliacao avaliacoes = 1; }
 
-message PainelRiscoReq { string tenant_id = 1; }
+message PainelRiscoReq {
+  string tenant_id = 1;
+  map<string, string> maturidade_controlos = 2;   // como em ListarRiscosReq
+}
 message CelulaMatriz { int32 probabilidade = 1; int32 impacto = 2; int32 total = 3; }
 message PainelRisco {
   int32 total = 1;
@@ -639,6 +670,8 @@ message PainelRisco {
   repeated CelulaMatriz matriz = 5;   // contagens por célula (probabilidade × impacto)
   int32 acima_tolerado = 6;      // nível ≥ limiar_tratar do apetite (GR.GR-1)
   int32 por_reavaliar = 7;       // última avaliação mais velha que a periodicidade da classe
+  // Nível depois das medidas ≥ limiar_tratar (sem medidas, conta o inerente).
+  int32 acima_tolerado_residual = 8;
 }
 
 // =============================================================================
@@ -646,7 +679,7 @@ message PainelRisco {
 //
 // Constrói sobre os ativos "servico_externo" do inventário: cada fornecedor pode
 // ligar-se a um ativo do tenant. A AVALIAÇÃO (questionário → score/classe) é
-// metodologia = IP no sidecar (pesos ocultos); a UI só mostra o resultado. Cobre
+// calculada no sidecar; a UI só mostra o resultado. Cobre
 // avaliação periódica (GR.CA-4/7), due diligence (GR.CA-6), requisitos contratuais
 // (GR.CA-5), pessoal-chave nos exercícios (GR.CA-8) e término de contrato (GR.CA-10).
 // =============================================================================
@@ -656,7 +689,7 @@ service FornecedorService {
   rpc ObterFornecedor    (FornecedorRef)         returns (Fornecedor);
   rpc GuardarFornecedor  (Fornecedor)            returns (Fornecedor);   // id vazio = criar
   rpc EliminarFornecedor (FornecedorRef)         returns (FornecedorVazio);
-  // Questionário de avaliação (perguntas localizadas; os pesos são IP, ocultos).
+  // Questionário de avaliação (perguntas localizadas; a pontuação é calculada no sidecar).
   rpc ListarQuestionario (QuestionarioReq)        returns (Questionario);
   // Avalia o fornecedor: respostas → score/classe no sidecar + entrada no histórico.
   rpc AvaliarFornecedor  (AvaliacaoFornecedorReq) returns (Fornecedor);
@@ -763,8 +796,10 @@ message PainelFornecedor {
 //
 // Apaga TODOS os dados de um tenant na premium-data-db (inventário, risco,
 // fornecedores, jobs de IA). Chamado APENAS pelo plano de controlo (superadmin)
-// durante o hard-delete de um tenant — nunca pela app. O perímetro de confiança
-// é a rede interna + mTLS, como nos restantes serviços deste contrato.
+// durante o hard-delete de um tenant — nunca pela app. O servidor confere a
+// identidade da folha mTLS do cliente: `PurgarTenant` só aceita a do plano de
+// controlo (a do núcleo recebe PERMISSION_DENIED); `AnonimizarPessoa` aceita a do
+// núcleo e a do plano de controlo.
 // =============================================================================
 
 service PurgaService {
@@ -868,7 +903,8 @@ message ResultadosPesquisa {
 
 // =============================================================================
 // Conetores — verificação técnica de configuração em serviços externos.
-// Fase 1: Microsoft Entra ID (Microsoft Graph, apenas leitura).
+// Fontes: Microsoft Entra ID (Microsoft Graph) e Active Directory local (LDAPS),
+// ambas apenas em leitura.
 //
 // O sidecar é a autoridade: guarda a credencial do cliente (cifrada em repouso),
 // fala com o serviço externo, avalia os sinais e regista os eventos. O core é
@@ -922,6 +958,10 @@ service ConetorService {
   // As constatações ligadas a um conjunto de controlos (detalhe do controlo,
   // avisos nos riscos), sem trazer o painel inteiro.
   rpc ConstatacoesDosControlos (ControlosConstatacoesReq) returns (ConstatacoesResp);
+  // O que as verificações técnicas dizem de um risco: dos controlos em que os
+  // tratamentos assentam, os que falham a meta da empresa, e, do ativo, quantas
+  // vulnerabilidades graves tem por corrigir. Só sugere: não mexe no risco.
+  rpc AvisosDoRisco (AvisosRiscoReq) returns (AvisosRiscoResp);
   // Para o tick do core: eventos novos, as constatações para a evidência
   // automática e as verificações em linha concluídas. Sem textos de ecrã.
   rpc ProcessamentoConetores (ProcessamentoReq) returns (ProcessamentoResp);
@@ -943,13 +983,13 @@ message ConetorTenantReq {
 
 message ConfigConetorReq {
   string tenant_id = 1;
-  string tipo = 2;               // "entra" (único suportado na fase 1)
+  string tipo = 2;               // a fonte: "entra" (Microsoft 365) | "ad"
   string ms_tenant_id = 3;       // GUID do tenant Microsoft (validado no sidecar)
   string client_id = 4;          // GUID da app registada pelo cliente
   // Credencial em claro APENAS em trânsito (o canal core→sidecar é mTLS); o
   // sidecar cifra antes de guardar. Vazia = manter a credencial já guardada.
   string credencial = 5;
-  string credencial_tipo = 6;    // "secret" (fase 1) | "certificado" (futuro)
+  string credencial_tipo = 6;    // "secret"
   int32 intervalo_horas = 7;     // 0 = default do servidor
   // Política da empresa por sinal + controlos ligados (JSON). O sidecar valida
   // o formato e os limites; o conteúdo é interpretado na avaliação.
@@ -1118,16 +1158,44 @@ message ConstatacoesReq {
   string tenant_id = 1;
   string locale = 2;
   string tema = 3;                      // vazio = todos os temas
+  // Código do controlo → estado declarado no core. O servidor recalcula as
+  // contradições (dado como feito, e a verificação diz que falha) com o estado de
+  // agora. Vazio = o que ficou guardado na última verificação.
+  map<string, string> declaracoes = 4;
 }
 
 message ConstatacoesResp {
   repeated SinalConetor sinais = 1;
 }
 
+message AvisosRiscoReq {
+  string tenant_id = 1;
+  repeated string codigos = 2;          // códigos dos controlos dos tratamentos
+  string ativo_id = 3;                  // vazio = sem ativo
+  string locale = 4;
+  map<string, string> declaracoes = 5;  // como em ConstatacoesReq
+}
+
+message ControloAFalhar {
+  string codigo = 1;
+  repeated SinalConetor sinais = 2;     // os que falham a meta e o ligam
+}
+
+message AvisoAtivo {
+  int32 criticas = 1;                   // vulnerabilidades críticas + altas por corrigir
+  string observado_em = 2;              // RFC3339: a data dos dados
+}
+
+message AvisosRiscoResp {
+  repeated ControloAFalhar controlos_a_falhar = 1;
+  AvisoAtivo ativo = 2;                 // ausente se não há dados de vulnerabilidades do ativo
+}
+
 message ControlosConstatacoesReq {
   string tenant_id = 1;
   string locale = 2;
   repeated string codigos = 3;          // códigos dos controlos (ex.: "PR.GA-3")
+  map<string, string> declaracoes = 4;  // como em ConstatacoesReq
 }
 
 message ProcessamentoReq {
@@ -1148,6 +1216,11 @@ message ConstatacaoEvidencia {
   repeated string controlos = 7;              // ligados (metas da empresa ou catálogo)
   repeated string controlos_evidencia = 8;    // onde anexar a evidência (obrigatórios ou ligados)
   string verificado_em = 9;
+  // O que esta constatação acrescenta ao corpo da evidência automática (JSON): os
+  // mesmos campos de sempre, sem o que muda sem o estado mudar. O núcleo junta os
+  // de um controlo e grava; como o hash do conteúdo é o que evita cópias, este
+  // texto só muda quando o estado muda. Vazio num servidor que ainda não o manda.
+  string corpo_evidencia_json = 10;
 }
 
 message VerificacaoFeita {
@@ -1401,21 +1474,20 @@ message FontesReq {
   string destino = 3;                   // vazio = todos
 }
 
-// Coluna que o adaptador espera encontrar. Os SINÓNIMOS são o que faz o
-// mapeamento automático funcionar com exportações em idiomas diferentes.
+// Coluna que o adaptador espera encontrar. `sinonimos` e `equivalencias` são o
+// dicionário com que o servidor reconhece colunas e valores de exportações em
+// idiomas diferentes: usa-os por dentro e `ListarFontes` não os preenche.
 message CampoEsperado {
   string chave = 1;                     // campo nosso (ex.: "nome")
   string label = 2;                     // traduzido
   string ajuda = 3;
   bool obrigatorio = 4;
   string tipo_dado = 5;                 // texto | inteiro | data | booleano | opcao
-  repeated string sinonimos = 6;        // cabeçalhos aceites na origem
-  // Domínio fechado de `tipo_dado = "opcao"` e o ponto de partida para traduzir
-  // valores da origem. O wizard precisa dos dois para oferecer o menu de
-  // equivalência (C11) e para MOSTRAR a conversão de escalas antes de aplicar —
-  // uma conversão que o utilizador não vê é uma conversão secreta.
+  repeated string sinonimos = 6;        // cabeçalhos aceites na origem (só uso interno)
+  // Domínio fechado de `tipo_dado = "opcao"`: o wizard oferece-o como menu de
+  // equivalência (C11) quando um valor da origem não é conhecido.
   repeated string opcoes = 7;
-  map<string, string> equivalencias = 8;
+  map<string, string> equivalencias = 8; // valores da origem aceites (só uso interno)
 }
 
 message FonteImportacao {

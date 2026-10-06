@@ -13,20 +13,10 @@ from functools import lru_cache
 
 from app.config import get_settings
 from app.premium.client import ClienteSidecar
+from app.premium.conversao import ator_pb, documento_to_dict
 
 
 # ── Conversões protobuf → dict ────────────────────────────────────────────────
-
-def _ator_pb(premium_pb2, ator: dict | None):
-    """Constrói a message Ator (identidade de quem age) para os RPCs de escrita.
-    None → campo ausente (o sidecar trata como âmbito total)."""
-    if not ator:
-        return None
-    return premium_pb2.Ator(
-        id=ator.get("id", ""),
-        nome=ator.get("nome", ""),
-        ambito=ator.get("ambito", ""),
-    )
 
 
 def _fornecedor_to_dict(pb) -> dict:
@@ -77,24 +67,6 @@ def _painel_to_dict(pb) -> dict:
         "risco_alto": pb.risco_alto,
         "por_avaliar": pb.por_avaliar,
         "sem_due_diligence": pb.sem_due_diligence,
-    }
-
-
-def _documento_to_dict(pb) -> dict:
-    return {
-        "titulo": pb.titulo,
-        "subtitulo": pb.subtitulo,
-        "data_geracao": pb.data_geracao,
-        "controlos": list(pb.controlos),
-        "secoes": [
-            {
-                "titulo": s.titulo,
-                "texto": s.texto,
-                "cabecalho": list(s.cabecalho),
-                "linhas": [list(l.celulas) for l in s.linhas],
-            }
-            for s in pb.secoes
-        ],
     }
 
 
@@ -149,7 +121,7 @@ class FornecedorClient(ClienteSidecar):
             encerrado_em=dados.get("encerrado_em", "") or "",
             responsavel_id=dados.get("responsavel_id", ""),
             responsavel_nome=dados.get("responsavel_nome", ""),
-            ator=_ator_pb(premium_pb2, ator),
+            ator=ator_pb(premium_pb2, ator),
         )
         return _fornecedor_to_dict(self._ensure_stub().GuardarFornecedor(pb))
 
@@ -158,7 +130,7 @@ class FornecedorClient(ClienteSidecar):
 
         self._ensure_stub().EliminarFornecedor(
             premium_pb2.FornecedorRef(
-                tenant_id=tenant_id, id=fornecedor_id, ator=_ator_pb(premium_pb2, ator)
+                tenant_id=tenant_id, id=fornecedor_id, ator=ator_pb(premium_pb2, ator)
             )
         )
 
@@ -192,7 +164,7 @@ class FornecedorClient(ClienteSidecar):
                 nota=nota,
                 avaliador_id=avaliador_id,
                 avaliador_nome=avaliador_nome,
-                ator=_ator_pb(premium_pb2, ator),
+                ator=ator_pb(premium_pb2, ator),
             )
         )
         return _fornecedor_to_dict(resp)
@@ -219,7 +191,7 @@ class FornecedorClient(ClienteSidecar):
         resp = self._ensure_stub().GerarDocumento(
             premium_pb2.DocumentoReq(tenant_id=tenant_id, tipo=tipo, locale=locale)
         )
-        return _documento_to_dict(resp)
+        return documento_to_dict(resp)
 
 
 @lru_cache

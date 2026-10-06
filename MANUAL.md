@@ -253,19 +253,27 @@ docker compose up -d
 
 ### Update to a new version
 
-```bash
-# Pull the latest images from GHCR and restart
-docker compose pull
-docker compose up -d
-```
-
-Or simply run the installer again, which does the same (keeps the existing `.env`):
+The recommended way is to run the installer again: it keeps the `.env`, refreshes `docker-compose.yml`, takes a backup before touching the images and waits for the application to become healthy.
 
 ```bash
-sh start_nis2pme.sh
+curl -fsSL https://raw.githubusercontent.com/nis2pme/platform/main/start_nis2pme.sh | sudo sh
 ```
+
+(or `sh start_nis2pme.sh` if you already downloaded the installer). If the installation folder was created with `sudo`, run it with `sudo` too.
+
+> `docker compose pull && docker compose up -d` also pulls the images, but it does not refresh `docker-compose.yml` and takes no backup first: it only suffices when the new version does not change the compose file.
 
 > Database migrations are applied automatically at startup (`alembic upgrade head`).
+
+#### Update from the web interface (optional)
+
+On a Linux server with systemd, the administrator can update from **Settings → Updates**, without a terminal. The installer installs the agent by default when it runs as root (`sudo`) on a server with systemd; to add it to an existing installation, or if the installer ran without `sudo`, run this once on the server:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nis2pme/platform/main/start_nis2pme.sh | sudo sh -s -- --agente
+```
+
+It installs an agent (a systemd unit with no network port, and without giving any container access to Docker) that only applies versions **signed by NIS2PME**: it checks the signature and the checksum of every file before running anything. When a new version exists, the "Update now" button asks for your password, takes the backup, updates and shows the progress; if the new version does not start and the database has not changed, the previous one is restored automatically. The application is unavailable for 1 to 3 minutes. To remove the agent: `sudo /usr/local/lib/nis2pme/nis2pme-agente.sh --desinstalar`. Without the agent, the screen shows the command above. Use `--sem-agente` to skip it.
 
 ### Built-in backups (recommended)
 

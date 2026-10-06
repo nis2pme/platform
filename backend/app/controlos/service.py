@@ -49,10 +49,12 @@ from app.frameworks.models import (
     SubdomainLocale,
 )
 from app.frameworks.runtime import (
+    NIVEIS_QNRCS,
     ControlHierarchyRow,
     load_company_control_rows,
     load_preferred_locales,
     load_thresholds_map,
+    nivel_qnrcs_efetivo,
     resolver_framework_empresa,
 )
 from app.notificacoes.catalogo import Codigo
@@ -258,22 +260,8 @@ def _load_ultimo_nivel_controlo(
     }
 
 
-def _get_nivel_alvo_qnrcs(empresa: Empresa) -> int | None:
-    nivel_qnrcs = empresa.nivel_qnrcs
-    if nivel_qnrcs is None:
-        nivel_qnrcs = empresa.tipo_entidade
-    if hasattr(nivel_qnrcs, "value"):
-        nivel_qnrcs = nivel_qnrcs.value
-
-    mapa = {
-        "basico": 1,
-        "base": 1,
-        "substancial": 2,
-        "importante": 2,
-        "elevado": 3,
-        "essencial": 3,
-    }
-    return mapa.get(nivel_qnrcs)
+def _get_nivel_alvo_qnrcs(empresa: Empresa) -> int:
+    return NIVEIS_QNRCS.index(nivel_qnrcs_efetivo(empresa)) + 1
 
 
 def _is_obrigatorio_perfil(
@@ -295,8 +283,6 @@ def _is_obrigatorio_perfil(
             return False
 
         nivel_alvo = _get_nivel_alvo_qnrcs(empresa)
-        if nivel_alvo is None:
-            return True
 
         if primeiro_nivel is None:
             return False

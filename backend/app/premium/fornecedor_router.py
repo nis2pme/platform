@@ -15,16 +15,18 @@ event loop.
 from __future__ import annotations
 
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel
+from functools import partial
+from typing import Annotated
 
-from app.premium.client import (PremiumIndisponivelError,
-                                e_indisponibilidade)
-from app.premium.client import e_valor_fora_do_contrato
-from app.premium.recusas import recusa_de_licenca
-from app.premium.atores import ator_de, negar_capacidade, registar_recusa_de_recurso, resolver_pessoa
+from fastapi import APIRouter, Depends, Request
+from pydantic import BaseModel, Field
+
+from app.premium.atores import ator_de, negar_capacidade, resolver_pessoa
 from app.premium.dependencies import require_feature
+from app.premium.erros import executar_grpc
 from app.premium.fornecedor_client import FornecedorClient, get_fornecedor_client
+from app.premium.pedido import (cliente_ou_503, fundir_alteracoes, locale_do_pedido,
+                                todos_opcionais, uuid_ou_none)
 from app.shared.audit import Acao, registar_acao
 from app.shared.capacidades import ClasseAcao, require_capability, tem_capacidade
 from app.shared.dependencies import CurrentUserDep, SessionDep
@@ -45,42 +47,76 @@ EliminarDep = Depends(require_capability("fornecedores", ClasseAcao.ELIMINAR))
 
 # ── Schemas de entrada ────────────────────────────────────────────────────────
 
+# Os tetos seguem o uso (nomes e contactos curtos, notas de uma ou duas páginas) e
+# são os mesmos que o sidecar impõe, que é quem decide. Sem eles, um fornecedor com
+# campos de 1 MiB fazia a listagem (até 500 linhas numa só mensagem gRPC) deixar de
+# abrir para toda a empresa.
+_CHAVE = Annotated[str, Field(max_length=64)]
+
+
 class FornecedorIn(BaseModel):
-    ativo_id: str = ""
-    nome: str
-    servico: str = ""
-    contacto: str = ""
-    criticidade: str = ""
-    estado: str = "ativo"
+    ativo_id: str = Field("", max_length=64)
+    nome: str = Field(max_length=200)
+    servico: str = Field("", max_length=500)
+    contacto: str = Field("", max_length=300)
+    criticidade: str = Field("", max_length=32)
+    estado: str = Field("ativo", max_length=32)
     due_diligence: bool = False
-    due_diligence_nota: str = ""
-    due_diligence_data: str = ""
-    requisitos: dict[str, str] = {}
-    pessoal_chave: str = ""
-    termino_nota: str = ""
+    due_diligence_nota: str = Field("", max_length=4000)
+    due_diligence_data: str = Field("", max_length=32)
+    # Cláusula -> «true»/«false». Que cláusulas existem é o sidecar que sabe.
+    requisitos: dict[_CHAVE, Annotated[str, Field(max_length=8)]] = Field(
+        default_factory=dict, max_length=50
+    )
+    pessoal_chave: str = Field("", max_length=4000)
+    termino_nota: str = Field("", max_length=4000)
     acessos_revogados: bool = False
-    dados_destino: str = ""
-    encerrado_em: str = ""
-    responsavel_id: str = ""
-    responsavel_nome: str = ""
+    dados_destino: str = Field("", max_length=32)
+    encerrado_em: str = Field("", max_length=32)
+    responsavel_id: str = Field("", max_length=64)
+    responsavel_nome: str = Field("", max_length=200)
+
+
+# Os textos opcionais, que um PATCH limpa mandando `null` (é o mesmo que mandar
+# vazio). Deduz-se do modelo, para um campo novo não ficar de fora: o que é texto
+# e tem o vazio por omissão limpa-se. O que é obrigatório (`nome`), tem outro valor
+# por omissão (`estado`), é sim/não ou é um mapa (`requisitos`) leva 422 com `null`:
+# apagar o estado ou as cláusulas de um contrato por engano não é «limpar».
+_TEXTOS_LIMPAVEIS = frozenset(
+    n for n, f in FornecedorIn.model_fields.items() if f.annotation is str and f.default == ""
+)
+
+# O PATCH aceita qualquer subconjunto destes campos (o mesmo modelo, tudo opcional).
+FornecedorPatch = todos_opcionais(FornecedorIn, "FornecedorPatch", anulaveis=_TEXTOS_LIMPAVEIS)
+
+# A pessoa responsável é um par: o identificador da conta e o nome (de uma pessoa
+# externa, sem conta). Alterar um invalida o outro.
+_PAR_RESPONSAVEL = (("responsavel_id", "responsavel_nome"),)
 
 
 class AvaliacaoIn(BaseModel):
-    respostas: dict[str, int] = {}
-    nota: str = ""
+    # Pergunta -> resposta (0 a 3). Que perguntas existem é o sidecar que sabe.
+    respostas: dict[_CHAVE, int] = Field(default_factory=dict, max_length=100)
+    nota: str = Field("", max_length=4000)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-def _cliente(cli: FornecedorClient | None) -> FornecedorClient:
-    if cli is None:
-        raise HTTPException(status_code=503, detail={"codigo": "premium_indisponivel"})
-    return cli
-
-
-def _locale(request: Request) -> str:
-    lang = (request.headers.get("Accept-Language") or "").lower()
-    return "en" if lang.startswith("en") else "pt-PT"
+def _registar_responsavel(db, utilizador, request, fornecedor: dict, resp_id: str, resp_nome: str) -> None:
+    """Passar um fornecedor a outra pessoa é delegação, e deixa o mesmo rasto que
+    no inventário e no risco: o nome do FORNECEDOR vai (sem ele, o registo só
+    guardava o nome da pessoa, e lia-se como se a ação fosse sobre ela)."""
+    registar_acao(
+        db, acao=Acao.FORNECEDOR_RESPONSAVEL_ATRIBUIDO, empresa_id=utilizador.empresa_id,
+        utilizador_id=utilizador.id, entidade_tipo="Fornecedor",
+        entidade_id=uuid_ou_none(fornecedor.get("id")),
+        dados_novos={
+            "nome": fornecedor.get("nome"),
+            "responsavel_id": resp_id,
+            "responsavel_nome": resp_nome,
+        },
+        request=request,
+    )
 
 
 def _exigir_delegar(utilizador, request: Request | None = None) -> None:
@@ -89,60 +125,9 @@ def _exigir_delegar(utilizador, request: Request | None = None) -> None:
         raise negar_capacidade(utilizador, "fornecedores", ClasseAcao.DELEGAR, request)
 
 
-def _executar(fn, *args, utilizador=None):
-    """Faz a chamada gRPC e traduz os erros em HTTP.
-
-    `utilizador` só nas escritas: a recusa de âmbito do sidecar (registo não
-    atribuído ao ator) fica na trilha."""
-    try:
-        return fn(*args)
-    except HTTPException:
-        raise
-    except PremiumIndisponivelError:
-        # O sidecar não está utilizável: canal por montar, material de TLS em
-        # falta, transporte ausente. É indisponibilidade do módulo, não avaria da
-        # plataforma — e a diferença é a que o cliente precisa de ver para saber
-        # se age (renovar a licença, verificar a rede) ou se reporta um defeito.
-        # Antes escapava daqui e saía 500 em todas as rotas premium.
-        raise HTTPException(status_code=503, detail={"codigo": "premium_indisponivel"})
-    except Exception as exc:  # noqa: BLE001 — traduzido abaixo
-        if e_valor_fora_do_contrato(exc):
-            raise HTTPException(status_code=400, detail={"codigo": "valor_fora_de_intervalo"}) from exc
-        recusa = recusa_de_licenca(exc)
-        if recusa is not None:
-            raise recusa from exc
-        try:
-            import grpc  # type: ignore
-        except ImportError:
-            raise
-        if isinstance(exc, grpc.RpcError):
-            code = exc.code()
-            if code == grpc.StatusCode.NOT_FOUND:
-                raise HTTPException(status_code=404, detail={"codigo": "nao_encontrado"})
-            if code == grpc.StatusCode.PERMISSION_DENIED:
-                if utilizador is not None:
-                    registar_recusa_de_recurso(utilizador, "fornecedores")
-                raise HTTPException(status_code=403, detail={"codigo": "sem_permissao_recurso"})
-            if code == grpc.StatusCode.INVALID_ARGUMENT:
-                raise HTTPException(
-                    status_code=400, detail={"codigo": "fornecedor_invalido", "msg": exc.details()}
-                )
-            if code == grpc.StatusCode.FAILED_PRECONDITION:
-                # Estado que impede a ação, corrigível por quem pediu → 409.
-                raise HTTPException(
-                    status_code=409,
-                    detail={"codigo": "estado_invalido", "msg": exc.details()},
-                )
-            if e_indisponibilidade(exc):
-                # Sidecar em baixo ou pendurado. O 502 dizia «o upstream
-                # respondeu mal»; aqui não respondeu de todo. Sem isto, a mesma
-                # avaria saía 502 ou 503 conforme a cache de entitlements
-                # estivesse quente — e um alerta não se constrói sobre isso.
-                raise HTTPException(
-                    status_code=503, detail={"codigo": "premium_indisponivel"}
-                )
-            raise HTTPException(status_code=502, detail={"codigo": "fornecedor_erro"})
-        raise
+# `utilizador` só nas escritas: a recusa de âmbito do sidecar (registo não
+# atribuído ao ator) fica na trilha. Os códigos genéricos levam «fornecedor».
+_executar = partial(executar_grpc, modulo="fornecedores", prefixo="fornecedor")
 
 
 # ── Leitura ──────────────────────────────────────────────────────────────────
@@ -156,15 +141,15 @@ def listar(
     offset: int = 0,
     cli: FornecedorClient | None = FornecedorDep,
 ):
-    c = _cliente(cli)
+    c = cliente_ou_503(cli)
     return _executar(
-        c.listar, str(utilizador.empresa_id), estado, _locale(request), limite, offset
+        c.listar, str(utilizador.empresa_id), estado, locale_do_pedido(request), limite, offset
     )
 
 
 @router.get("/painel", summary="Indicadores do módulo")
 def painel(utilizador: CurrentUserDep, cli: FornecedorClient | None = FornecedorDep):
-    c = _cliente(cli)
+    c = cliente_ou_503(cli)
     return _executar(c.obter_painel, str(utilizador.empresa_id))
 
 
@@ -172,8 +157,8 @@ def painel(utilizador: CurrentUserDep, cli: FornecedorClient | None = Fornecedor
 def questionario(
     request: Request, utilizador: CurrentUserDep, cli: FornecedorClient | None = FornecedorDep
 ):
-    c = _cliente(cli)
-    return _executar(c.listar_questionario, str(utilizador.empresa_id), _locale(request))
+    c = cliente_ou_503(cli)
+    return _executar(c.listar_questionario, str(utilizador.empresa_id), locale_do_pedido(request))
 
 
 @router.get("/documento", summary="Registo de fornecedores (payload localizado)")
@@ -184,9 +169,9 @@ def documento(
     from app.premium.anexar_evidencia import enriquecer_documento
     from app.shared.dependencies import get_empresa_ativa
 
-    c = _cliente(cli)
+    c = cliente_ou_503(cli)
     doc = _executar(
-        c.gerar_documento, str(utilizador.empresa_id), "registo_fornecedores", _locale(request)
+        c.gerar_documento, str(utilizador.empresa_id), "registo_fornecedores", locale_do_pedido(request)
     )
     # Hash estável + controlo-alvo para o "anexar como evidência" num clique.
     doc = enriquecer_documento(db, get_empresa_ativa(db, utilizador), doc)
@@ -204,7 +189,7 @@ def documento(
 def obter(
     fornecedor_id: str, utilizador: CurrentUserDep, cli: FornecedorClient | None = FornecedorDep
 ):
-    c = _cliente(cli)
+    c = cliente_ou_503(cli)
     return _executar(c.obter, str(utilizador.empresa_id), fornecedor_id)
 
 
@@ -212,7 +197,7 @@ def obter(
 def avaliacoes(
     fornecedor_id: str, utilizador: CurrentUserDep, cli: FornecedorClient | None = FornecedorDep
 ):
-    c = _cliente(cli)
+    c = cliente_ou_503(cli)
     return _executar(c.listar_avaliacoes, str(utilizador.empresa_id), fornecedor_id)
 
 
@@ -226,7 +211,7 @@ def criar(
     db: SessionDep,
     cli: FornecedorClient | None = FornecedorDep,
 ):
-    c = _cliente(cli)
+    c = cliente_ou_503(cli)
     resp_id, resp_nome, mudou = resolver_pessoa(
         db, utilizador, dados.responsavel_id, dados.responsavel_nome
     )
@@ -241,10 +226,13 @@ def criar(
     )
     registar_acao(
         db, acao=Acao.FORNECEDOR_CRIADO, empresa_id=utilizador.empresa_id,
-        utilizador_id=utilizador.id, entidade_tipo="Fornecedor", entidade_id=None,
+        utilizador_id=utilizador.id, entidade_tipo="Fornecedor",
+        entidade_id=uuid_ou_none(resultado.get("id")),
         dados_novos={"nome": resultado.get("nome"), "criticidade": resultado.get("criticidade")},
         request=request,
     )
+    if mudou:
+        _registar_responsavel(db, utilizador, request, resultado, resp_id, resp_nome)
     db.commit()
     return resultado
 
@@ -252,21 +240,35 @@ def criar(
 @router.patch("/{fornecedor_id}", summary="Atualizar um fornecedor", dependencies=[OperarDep])
 def atualizar(
     fornecedor_id: str,
-    dados: FornecedorIn,
+    dados: FornecedorPatch,  # type: ignore[valid-type]
     request: Request,
     utilizador: CurrentUserDep,
     db: SessionDep,
     cli: FornecedorClient | None = FornecedorDep,
 ):
-    c = _cliente(cli)
+    c = cliente_ou_503(cli)
     atual = _executar(c.obter, str(utilizador.empresa_id), fornecedor_id)
+    # O sidecar grava por substituição: manda-se o registo atual com só o que o
+    # corpo traz. O que não vem no corpo fica; `null` num texto limpa-o.
+    atual_editavel = {
+        k: v for k, v in atual.items() if k in FornecedorIn.model_fields and v is not None
+    }
+    alteracoes = {
+        k: "" if v is None else v for k, v in dados.model_dump(exclude_unset=True).items()
+    }
+    # Sem revalidar o registo inteiro: o corpo já passou pelos tetos do
+    # `FornecedorPatch`, e o que estava guardado antes deles não pode impedir de
+    # alterar outro campo. O sidecar aplica os tetos só ao que muda.
+    novo = FornecedorIn.model_construct(
+        **fundir_alteracoes(atual_editavel, alteracoes, pares=_PAR_RESPONSAVEL)
+    )
     resp_id, resp_nome, mudou = resolver_pessoa(
-        db, utilizador, dados.responsavel_id, dados.responsavel_nome,
+        db, utilizador, novo.responsavel_id, novo.responsavel_nome,
         atual_id=atual.get("responsavel_id") or "", atual_nome=atual.get("responsavel_nome") or "",
     )
     if mudou:
         _exigir_delegar(utilizador, request)
-    payload = dados.model_dump()
+    payload = novo.model_dump()
     payload["responsavel_id"] = resp_id
     payload["responsavel_nome"] = resp_nome
     resultado = _executar(
@@ -275,9 +277,12 @@ def atualizar(
     )
     registar_acao(
         db, acao=Acao.FORNECEDOR_ATUALIZADO, empresa_id=utilizador.empresa_id,
-        utilizador_id=utilizador.id, entidade_tipo="Fornecedor", entidade_id=None,
-        dados_novos={"id": fornecedor_id}, request=request,
+        utilizador_id=utilizador.id, entidade_tipo="Fornecedor",
+        entidade_id=uuid_ou_none(fornecedor_id),
+        dados_novos={"id": fornecedor_id, "nome": resultado.get("nome")}, request=request,
     )
+    if mudou:
+        _registar_responsavel(db, utilizador, request, resultado, resp_id, resp_nome)
     db.commit()
     return resultado
 
@@ -291,19 +296,19 @@ def avaliar(
     db: SessionDep,
     cli: FornecedorClient | None = FornecedorDep,
 ):
-    from app.shared.pii import decifrar_pii
-
-    c = _cliente(cli)
+    c = cliente_ou_503(cli)
+    ator = ator_de(utilizador, "fornecedores")
     resultado = _executar(
         c.avaliar, str(utilizador.empresa_id), fornecedor_id, dados.respostas, dados.nota,
-        str(utilizador.id), decifrar_pii(utilizador.nome) or "", ator_de(utilizador, "fornecedores"),
+        ator["id"], ator["nome"], ator,
         utilizador=utilizador,
     )
     registar_acao(
         db, acao=Acao.FORNECEDOR_AVALIADO, empresa_id=utilizador.empresa_id,
-        utilizador_id=utilizador.id, entidade_tipo="Fornecedor", entidade_id=None,
-        dados_novos={"id": fornecedor_id, "classe": resultado.get("risco_classe"),
-                     "score": resultado.get("risco_score")},
+        utilizador_id=utilizador.id, entidade_tipo="Fornecedor",
+        entidade_id=uuid_ou_none(fornecedor_id),
+        dados_novos={"id": fornecedor_id, "nome": resultado.get("nome"),
+                     "classe": resultado.get("risco_classe"), "score": resultado.get("risco_score")},
         request=request,
     )
     db.commit()
@@ -321,7 +326,12 @@ def eliminar(
     db: SessionDep,
     cli: FornecedorClient | None = FornecedorDep,
 ):
-    c = _cliente(cli)
+    c = cliente_ou_503(cli)
+    # O nome lê-se antes: depois de apagado, já não há onde o ir buscar.
+    try:
+        nome = _executar(c.obter, str(utilizador.empresa_id), fornecedor_id).get("nome") or None
+    except Exception:  # noqa: BLE001 — o nome é um extra, nunca um requisito
+        nome = None
     _executar(
         c.eliminar, str(utilizador.empresa_id), fornecedor_id,
         ator_de(utilizador, "fornecedores", ClasseAcao.ELIMINAR),
@@ -329,7 +339,8 @@ def eliminar(
     )
     registar_acao(
         db, acao=Acao.FORNECEDOR_ELIMINADO, empresa_id=utilizador.empresa_id,
-        utilizador_id=utilizador.id, entidade_tipo="Fornecedor", entidade_id=None,
-        dados_novos={"id": fornecedor_id}, request=request,
+        utilizador_id=utilizador.id, entidade_tipo="Fornecedor",
+        entidade_id=uuid_ou_none(fornecedor_id),
+        dados_novos={"id": fornecedor_id, "nome": nome}, request=request,
     )
     db.commit()

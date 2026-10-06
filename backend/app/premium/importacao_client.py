@@ -17,6 +17,7 @@ from typing import Iterator
 
 from app.config import get_settings
 from app.premium.client import ClienteSidecar
+from app.premium.conversao import ator_pb, documento_to_dict
 
 # Tamanho de cada bloco enviado ao sidecar. Confortavelmente abaixo do limite de
 # mensagem do gRPC e grande o suficiente para não fragmentar de mais.
@@ -24,15 +25,6 @@ TAMANHO_BLOCO = 256 * 1024
 
 
 # ── Conversões protobuf → dict ────────────────────────────────────────────────
-
-def _ator_pb(premium_pb2, ator: dict | None):
-    if not ator:
-        return None
-    return premium_pb2.Ator(
-        id=ator.get("id", ""),
-        nome=ator.get("nome", ""),
-        ambito=ator.get("ambito", ""),
-    )
 
 
 def _mapeamento_to_dict(pb) -> dict:
@@ -70,15 +62,15 @@ def _mapeamento_pb(premium_pb2, mapeamento: dict | None):
 
 
 def _campo_to_dict(pb) -> dict:
+    # Só o que o ecrã usa para pedir o mapeamento. Os cabeçalhos que a origem pode
+    # ter e as equivalências por omissão servem o sidecar a interpretar o ficheiro:
+    # não saem daqui.
     return {
         "chave": pb.chave,
         "label": pb.label,
         "ajuda": pb.ajuda,
         "obrigatorio": pb.obrigatorio,
-        "tipo_dado": pb.tipo_dado,
-        "sinonimos": list(pb.sinonimos),
         "opcoes": list(pb.opcoes),
-        "equivalencias": dict(pb.equivalencias),
     }
 
 
@@ -212,7 +204,6 @@ def _fonte_to_dict(pb) -> dict:
         "nome": pb.nome,
         "descricao": pb.descricao,
         "destino": pb.destino,
-        "versao_perfil": pb.versao_perfil,
         "formatos": list(pb.formatos),
         "campos": [_campo_to_dict(c) for c in pb.campos],
         "ajuda_exportacao": pb.ajuda_exportacao,
@@ -274,7 +265,7 @@ class ImportacaoClient(ClienteSidecar):
             nome_ficheiro=meta.get("nome_ficheiro", ""),
             sha256=meta.get("sha256", ""),
             locale=meta.get("locale", ""),
-            ator=_ator_pb(premium_pb2, ator),
+            ator=ator_pb(premium_pb2, ator),
         )
 
         def blocos() -> Iterator:
@@ -357,7 +348,7 @@ class ImportacaoClient(ClienteSidecar):
             nome_ficheiro=meta.get("nome_ficheiro", ""),
             sha256=meta.get("sha256", ""),
             locale=meta.get("locale", ""),
-            ator=_ator_pb(premium_pb2, ator),
+            ator=ator_pb(premium_pb2, ator),
             perfil=perfil,
             declaracoes=declaracoes,
             travoes_confirmados=travoes_confirmados or [],
@@ -404,7 +395,7 @@ class ImportacaoClient(ClienteSidecar):
                 tenant_id=tenant_id,
                 importacao_id=importacao_id,
                 mapeamento=_mapeamento_pb(premium_pb2, mapeamento),
-                ator=_ator_pb(premium_pb2, ator),
+                ator=ator_pb(premium_pb2, ator),
             ),
             timeout=timeout,
         )
@@ -438,7 +429,7 @@ class ImportacaoClient(ClienteSidecar):
                 ],
                 carimbo=carimbo,
                 travoes_confirmados=list(travoes_confirmados),
-                ator=_ator_pb(premium_pb2, ator),
+                ator=ator_pb(premium_pb2, ator),
             ),
             timeout=timeout,
         )
@@ -451,7 +442,7 @@ class ImportacaoClient(ClienteSidecar):
 
         resp = self._ensure_stub().ReverterImportacao(
             premium_pb2.ImportacaoRef(
-                tenant_id=tenant_id, id=importacao_id, ator=_ator_pb(premium_pb2, ator)
+                tenant_id=tenant_id, id=importacao_id, ator=ator_pb(premium_pb2, ator)
             ),
             timeout=timeout,
         )
@@ -480,7 +471,7 @@ class ImportacaoClient(ClienteSidecar):
                 tenant_id=tenant_id,
                 ids=list(ids),
                 acao=acao,
-                ator=_ator_pb(premium_pb2, ator),
+                ator=ator_pb(premium_pb2, ator),
             )
         )
         return {
@@ -491,13 +482,12 @@ class ImportacaoClient(ClienteSidecar):
     def documento(self, tenant_id: str, locale: str = "") -> dict:
         """Evidência: de onde vieram os dados e quando. Gerada a pedido, como
         todos os documentos premium."""
-        from app.premium.inventario_client import _documento_to_dict
         from app.premium.proto import premium_pb2  # type: ignore
 
         resp = self._ensure_stub().DocumentoImportacoes(
             premium_pb2.DocumentoReq(tenant_id=tenant_id, tipo="importacoes", locale=locale)
         )
-        return _documento_to_dict(resp)
+        return documento_to_dict(resp)
 
     def qualidade(self, tenant_id: str) -> dict:
         """Quantos ativos têm dono, série e procedência, e há quanto tempo foram
@@ -597,7 +587,7 @@ class ImportacaoClient(ClienteSidecar):
                 fonte=fonte,
                 nome=nome,
                 mapeamento=_mapeamento_pb(premium_pb2, mapeamento),
-                ator=_ator_pb(premium_pb2, ator),
+                ator=ator_pb(premium_pb2, ator),
             )
         )
         return _perfil_to_dict(resp)

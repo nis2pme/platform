@@ -455,8 +455,8 @@ class InventarioServiceServicer:
 
     def ClassificarCriticidade(self, request, context):
         """Assistente de criticidade: respostas/dimensões → classe derivada +
-        propagação pelo grafo de dependências + explicação localizada. A metodologia
-        (fórmula/pesos) vive no sidecar compilado — é IP; a UI só mostra o resultado.
+        propagação pelo grafo de dependências + explicação localizada. A classe é
+        calculada no sidecar; a UI só mostra o resultado.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -873,7 +873,7 @@ class RiscoServiceStub:
     Nível de risco = probabilidade × impacto (1-25), DERIVADO no sidecar (não é
     fonte de verdade). Reavaliar cria uma entrada no histórico versionado (nunca
     substitui). O tratamento liga-se a um controlo do core (UUID opaco); o risco
-    residual (por maturidade do controlo) chega no F2.
+    residual (por maturidade do controlo) é calculado no sidecar.
     =============================================================================
 
     """
@@ -963,14 +963,14 @@ class RiscoServiceServicer:
     Nível de risco = probabilidade × impacto (1-25), DERIVADO no sidecar (não é
     fonte de verdade). Reavaliar cria uma entrada no histórico versionado (nunca
     substitui). O tratamento liga-se a um controlo do core (UUID opaco); o risco
-    residual (por maturidade do controlo) chega no F2.
+    residual (por maturidade do controlo) é calculado no sidecar.
     =============================================================================
 
     """
 
     def ListarCenarios(self, request, context):
         """Catálogo de cenários de risco por tipo de ativo ("o que pode correr mal") —
-        servido pelo sidecar (é IP/metodologia). Cada cenário carrega a ameaça +
+        servido pelo sidecar. Cada cenário carrega a ameaça +
         vulnerabilidade formais e a tipologia do ID.AR-3. A UI mostra os cartões.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -1149,7 +1149,7 @@ class RiscoService:
     Nível de risco = probabilidade × impacto (1-25), DERIVADO no sidecar (não é
     fonte de verdade). Reavaliar cria uma entrada no histórico versionado (nunca
     substitui). O tratamento liga-se a um controlo do core (UUID opaco); o risco
-    residual (por maturidade do controlo) chega no F2.
+    residual (por maturidade do controlo) é calculado no sidecar.
     =============================================================================
 
     """
@@ -1539,7 +1539,7 @@ class FornecedorServiceStub:
 
     Constrói sobre os ativos "servico_externo" do inventário: cada fornecedor pode
     ligar-se a um ativo do tenant. A AVALIAÇÃO (questionário → score/classe) é
-    metodologia = IP no sidecar (pesos ocultos); a UI só mostra o resultado. Cobre
+    calculada no sidecar; a UI só mostra o resultado. Cobre
     avaliação periódica (GR.CA-4/7), due diligence (GR.CA-6), requisitos contratuais
     (GR.CA-5), pessoal-chave nos exercícios (GR.CA-8) e término de contrato (GR.CA-10).
     =============================================================================
@@ -1605,7 +1605,7 @@ class FornecedorServiceServicer:
 
     Constrói sobre os ativos "servico_externo" do inventário: cada fornecedor pode
     ligar-se a um ativo do tenant. A AVALIAÇÃO (questionário → score/classe) é
-    metodologia = IP no sidecar (pesos ocultos); a UI só mostra o resultado. Cobre
+    calculada no sidecar; a UI só mostra o resultado. Cobre
     avaliação periódica (GR.CA-4/7), due diligence (GR.CA-6), requisitos contratuais
     (GR.CA-5), pessoal-chave nos exercícios (GR.CA-8) e término de contrato (GR.CA-10).
     =============================================================================
@@ -1638,7 +1638,7 @@ class FornecedorServiceServicer:
         raise NotImplementedError('Method not implemented!')
 
     def ListarQuestionario(self, request, context):
-        """Questionário de avaliação (perguntas localizadas; os pesos são IP, ocultos).
+        """Questionário de avaliação (perguntas localizadas; a pontuação é calculada no sidecar).
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -1732,7 +1732,7 @@ class FornecedorService:
 
     Constrói sobre os ativos "servico_externo" do inventário: cada fornecedor pode
     ligar-se a um ativo do tenant. A AVALIAÇÃO (questionário → score/classe) é
-    metodologia = IP no sidecar (pesos ocultos); a UI só mostra o resultado. Cobre
+    calculada no sidecar; a UI só mostra o resultado. Cobre
     avaliação periódica (GR.CA-4/7), due diligence (GR.CA-6), requisitos contratuais
     (GR.CA-5), pessoal-chave nos exercícios (GR.CA-8) e término de contrato (GR.CA-10).
     =============================================================================
@@ -1989,8 +1989,10 @@ class PurgaServiceStub:
 
     Apaga TODOS os dados de um tenant na premium-data-db (inventário, risco,
     fornecedores, jobs de IA). Chamado APENAS pelo plano de controlo (superadmin)
-    durante o hard-delete de um tenant — nunca pela app. O perímetro de confiança
-    é a rede interna + mTLS, como nos restantes serviços deste contrato.
+    durante o hard-delete de um tenant — nunca pela app. O servidor confere a
+    identidade da folha mTLS do cliente: `PurgarTenant` só aceita a do plano de
+    controlo (a do núcleo recebe PERMISSION_DENIED); `AnonimizarPessoa` aceita a do
+    núcleo e a do plano de controlo.
     =============================================================================
 
     """
@@ -2019,8 +2021,10 @@ class PurgaServiceServicer:
 
     Apaga TODOS os dados de um tenant na premium-data-db (inventário, risco,
     fornecedores, jobs de IA). Chamado APENAS pelo plano de controlo (superadmin)
-    durante o hard-delete de um tenant — nunca pela app. O perímetro de confiança
-    é a rede interna + mTLS, como nos restantes serviços deste contrato.
+    durante o hard-delete de um tenant — nunca pela app. O servidor confere a
+    identidade da folha mTLS do cliente: `PurgarTenant` só aceita a do plano de
+    controlo (a do núcleo recebe PERMISSION_DENIED); `AnonimizarPessoa` aceita a do
+    núcleo e a do plano de controlo.
     =============================================================================
 
     """
@@ -2068,8 +2072,10 @@ class PurgaService:
 
     Apaga TODOS os dados de um tenant na premium-data-db (inventário, risco,
     fornecedores, jobs de IA). Chamado APENAS pelo plano de controlo (superadmin)
-    durante o hard-delete de um tenant — nunca pela app. O perímetro de confiança
-    é a rede interna + mTLS, como nos restantes serviços deste contrato.
+    durante o hard-delete de um tenant — nunca pela app. O servidor confere a
+    identidade da folha mTLS do cliente: `PurgarTenant` só aceita a do plano de
+    controlo (a do núcleo recebe PERMISSION_DENIED); `AnonimizarPessoa` aceita a do
+    núcleo e a do plano de controlo.
     =============================================================================
 
     """
@@ -2493,7 +2499,8 @@ class PesquisaService:
 class ConetorServiceStub:
     """=============================================================================
     Conetores — verificação técnica de configuração em serviços externos.
-    Fase 1: Microsoft Entra ID (Microsoft Graph, apenas leitura).
+    Fontes: Microsoft Entra ID (Microsoft Graph) e Active Directory local (LDAPS),
+    ambas apenas em leitura.
 
     O sidecar é a autoridade: guarda a credencial do cliente (cifrada em repouso),
     fala com o serviço externo, avalia os sinais e regista os eventos. O core é
@@ -2585,6 +2592,11 @@ class ConetorServiceStub:
                 request_serializer=premium__pb2.ControlosConstatacoesReq.SerializeToString,
                 response_deserializer=premium__pb2.ConstatacoesResp.FromString,
                 _registered_method=True)
+        self.AvisosDoRisco = channel.unary_unary(
+                '/premium.v1.ConetorService/AvisosDoRisco',
+                request_serializer=premium__pb2.AvisosRiscoReq.SerializeToString,
+                response_deserializer=premium__pb2.AvisosRiscoResp.FromString,
+                _registered_method=True)
         self.ProcessamentoConetores = channel.unary_unary(
                 '/premium.v1.ConetorService/ProcessamentoConetores',
                 request_serializer=premium__pb2.ProcessamentoReq.SerializeToString,
@@ -2615,7 +2627,8 @@ class ConetorServiceStub:
 class ConetorServiceServicer:
     """=============================================================================
     Conetores — verificação técnica de configuração em serviços externos.
-    Fase 1: Microsoft Entra ID (Microsoft Graph, apenas leitura).
+    Fontes: Microsoft Entra ID (Microsoft Graph) e Active Directory local (LDAPS),
+    ambas apenas em leitura.
 
     O sidecar é a autoridade: guarda a credencial do cliente (cifrada em repouso),
     fala com o serviço externo, avalia os sinais e regista os eventos. O core é
@@ -2744,6 +2757,15 @@ class ConetorServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def AvisosDoRisco(self, request, context):
+        """O que as verificações técnicas dizem de um risco: dos controlos em que os
+        tratamentos assentam, os que falham a meta da empresa, e, do ativo, quantas
+        vulnerabilidades graves tem por corrigir. Só sugere: não mexe no risco.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def ProcessamentoConetores(self, request, context):
         """Para o tick do core: eventos novos, as constatações para a evidência
         automática e as verificações em linha concluídas. Sem textos de ecrã.
@@ -2858,6 +2880,11 @@ def add_ConetorServiceServicer_to_server(servicer, server):
                     request_deserializer=premium__pb2.ControlosConstatacoesReq.FromString,
                     response_serializer=premium__pb2.ConstatacoesResp.SerializeToString,
             ),
+            'AvisosDoRisco': grpc.unary_unary_rpc_method_handler(
+                    servicer.AvisosDoRisco,
+                    request_deserializer=premium__pb2.AvisosRiscoReq.FromString,
+                    response_serializer=premium__pb2.AvisosRiscoResp.SerializeToString,
+            ),
             'ProcessamentoConetores': grpc.unary_unary_rpc_method_handler(
                     servicer.ProcessamentoConetores,
                     request_deserializer=premium__pb2.ProcessamentoReq.FromString,
@@ -2894,7 +2921,8 @@ def add_ConetorServiceServicer_to_server(servicer, server):
 class ConetorService:
     """=============================================================================
     Conetores — verificação técnica de configuração em serviços externos.
-    Fase 1: Microsoft Entra ID (Microsoft Graph, apenas leitura).
+    Fontes: Microsoft Entra ID (Microsoft Graph) e Active Directory local (LDAPS),
+    ambas apenas em leitura.
 
     O sidecar é a autoridade: guarda a credencial do cliente (cifrada em repouso),
     fala com o serviço externo, avalia os sinais e regista os eventos. O core é
@@ -3300,6 +3328,33 @@ class ConetorService:
             '/premium.v1.ConetorService/ConstatacoesDosControlos',
             premium__pb2.ControlosConstatacoesReq.SerializeToString,
             premium__pb2.ConstatacoesResp.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def AvisosDoRisco(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/premium.v1.ConetorService/AvisosDoRisco',
+            premium__pb2.AvisosRiscoReq.SerializeToString,
+            premium__pb2.AvisosRiscoResp.FromString,
             options,
             channel_credentials,
             insecure,

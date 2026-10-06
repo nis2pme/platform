@@ -29,11 +29,14 @@ from pydantic import BaseModel, Field
 
 from app.config import get_settings
 from app.premium.atores import ator_de
-from app.premium.client import PremiumIndisponivelError, e_indisponibilidade
-from app.premium.client import e_valor_fora_do_contrato
-from app.premium.recusas import recusa_de_licenca
+from app.frameworks.runtime import nivel_qnrcs_efetivo
+from app.premium import contexto_nucleo
+from app.premium.cancela import validar_conteudo
 from app.premium.conetor_client import FEATURES_CONETORES, ConetorClient, get_conetor_client
 from app.premium.dependencies import require_alguma_feature, require_feature
+from app.premium.erros_conetor import executar_conetor
+from app.premium.erros_importacao import executar_importacao
+from app.premium.pedido import cliente_ou_503
 from app.shared.audit import Acao, registar_acao
 from app.shared.capacidades import ClasseAcao, require_capability
 from app.shared.dependencies import CurrentUserDep, SessionDep
@@ -97,109 +100,6 @@ class AdDiretoIn(BaseModel):
     ativo: bool = True
 
 
-# ── Helpers (partilhados com o router das verificações e com a importação) ────
-
-def _cliente(cli: ConetorClient | None) -> ConetorClient:
-    if cli is None:
-        raise HTTPException(status_code=503, detail={"codigo": "premium_indisponivel"})
-    return cli
-
-
-def _perfil_qnrcs(empresa) -> str:
-    """Nível QNRCS efetivo: o escolhido pela empresa, senão o derivado do tipo
-    de entidade (mesma regra do scoring dos controlos)."""
-    v = empresa.nivel_qnrcs or empresa.tipo_entidade
-    v = getattr(v, "value", v) or ""
-    if v in ("basico", "substancial", "elevado"):
-        return v
-    return {"base": "basico", "importante": "substancial", "essencial": "elevado"}.get(v, "basico")
-
-
-def _declaracoes(db, empresa) -> dict[str, str]:
-    """Código do controlo → estado declarado, para a régua por nível e a
-    deteção de contradições (declarado implementado vs. observado) no sidecar."""
-    from app.frameworks.runtime import load_company_control_rows, resolver_framework_empresa
-
-    framework = resolver_framework_empresa(db, empresa)
-    rows = load_company_control_rows(db, empresa.id, framework.id)
-    declaracoes: dict[str, str] = {}
-    for row in rows:
-        estado = getattr(row.ce, "estado", None)
-        declaracoes[row.control.code] = getattr(estado, "value", "") or ""
-    return declaracoes
-
-
-def _executar(fn, *args, **kwargs):
-    """Faz a chamada gRPC e traduz os erros em HTTP."""
-    try:
-        return fn(*args, **kwargs)
-    except HTTPException:
-        raise
-    except PremiumIndisponivelError:
-        # O sidecar não está utilizável: canal por montar, material de TLS em
-        # falta, transporte ausente. É indisponibilidade do módulo, não avaria da
-        # plataforma — e a diferença é a que o cliente precisa de ver para saber
-        # se age (renovar a licença, verificar a rede) ou se reporta um defeito.
-        raise HTTPException(status_code=503, detail={"codigo": "premium_indisponivel"})
-    except Exception as exc:  # noqa: BLE001 — traduzido abaixo
-        if e_valor_fora_do_contrato(exc):
-            raise HTTPException(status_code=400, detail={"codigo": "valor_fora_de_intervalo"}) from exc
-        recusa = recusa_de_licenca(exc, incluir_modulo=False)
-        if recusa is not None:
-            raise recusa from exc
-        try:
-            import grpc  # type: ignore
-        except ImportError:
-            raise
-        if isinstance(exc, grpc.RpcError):
-            code = exc.code()
-            if code == grpc.StatusCode.NOT_FOUND:
-                raise HTTPException(status_code=404, detail={"codigo": "nao_encontrado"})
-            if code == grpc.StatusCode.PERMISSION_DENIED:
-                # Falta o módulo desta fonte (o sidecar decide por fonte): é o
-                # plano que não dá, não a pessoa que não pode — 402 com o nome.
-                from app.premium.importacao_router import _modulo_em_falta
-
-                modulo = _modulo_em_falta(exc.details())
-                if modulo:
-                    raise HTTPException(status_code=402, detail={"codigo": "modulo_em_falta", "modulo": modulo})
-                raise HTTPException(status_code=403, detail={"codigo": "sem_permissao_recurso"})
-            if code == grpc.StatusCode.INVALID_ARGUMENT:
-                raise HTTPException(status_code=400, detail={"codigo": "conetor_invalido", "msg": exc.details()})
-            if code == grpc.StatusCode.FAILED_PRECONDITION:
-                raise _precondicao(exc.details())
-            if code == grpc.StatusCode.UNIMPLEMENTED:
-                raise HTTPException(status_code=501, detail={"codigo": "por_implementar"})
-            if e_indisponibilidade(exc):
-                # Sidecar em baixo ou pendurado: não respondeu de todo.
-                raise HTTPException(status_code=503, detail={"codigo": "premium_indisponivel"})
-            raise HTTPException(status_code=502, detail={"codigo": "conetor_erro"})
-        raise
-
-
-# Recusas de pré-condição do sidecar → código estável que o ecrã traduz. O
-# texto do sidecar é técnico e só em português; passado tal e qual, era o que
-# aparecia no aviso, também a quem usa a aplicação em inglês.
-_PRECONDICOES = (
-    # A instalação não tem a chave que cifra as credenciais: nada se guarda, e
-    # não é quem pediu que o resolve — é quem administra o servidor.
-    ("CONNECTOR_SECRETS_KEY", 503, "cifra_por_configurar"),
-    ("ligacao_em_falta", 409, "ligacao_em_falta"),
-    ("so_onprem", 403, "so_onprem"),
-    ("desativado", 409, "conetor_desativado"),
-    ("não configurado", 409, "conetor_nao_configurado"),
-)
-
-
-def _precondicao(detalhe: str) -> HTTPException:
-    for trecho, estado, codigo in _PRECONDICOES:
-        if trecho in (detalhe or ""):
-            return HTTPException(status_code=estado, detail={"codigo": codigo})
-    # Estado do tenant que impede a ação: corrigível por quem pediu, e por isso
-    # 409 — um 5xx diria que a plataforma avariou e mandava a pessoa esperar.
-    return HTTPException(status_code=409, detail={"codigo": "estado_invalido", "msg": detalhe})
-
-
 def _so_onprem() -> None:
     """Em SaaS o sidecar não está na rede da empresa, e abrir o AD à internet
     para o alcançar não é opção: aí o AD entra pelo ficheiro do coletor."""
@@ -210,26 +110,26 @@ def _so_onprem() -> None:
 # ── Comum às ligações ────────────────────────────────────────────────────────
 
 def _estado(fonte: str, utilizador, cli):
-    return _executar(_cliente(cli).estado, str(utilizador.empresa_id), fonte)
+    return executar_conetor(cliente_ou_503(cli).estado, str(utilizador.empresa_id), fonte)
 
 
 def _testar(fonte: str, utilizador, cli):
-    return _executar(_cliente(cli).testar, str(utilizador.empresa_id), fonte)
+    return executar_conetor(cliente_ou_503(cli).testar, str(utilizador.empresa_id), fonte)
 
 
 def _verificar(fonte: str, request: Request, utilizador, db, cli):
     from app.shared.dependencies import get_empresa_ativa
 
-    c = _cliente(cli)
+    c = cliente_ou_503(cli)
     # Contexto do core: o sidecar avalia com o nível do perfil e cruza a
     # observação técnica com o que está declarado na plataforma (contradições).
     empresa = get_empresa_ativa(db, utilizador)
-    resultado = _executar(
+    resultado = executar_conetor(
         c.executar_verificacao,
         str(utilizador.empresa_id),
         fonte,
-        _perfil_qnrcs(empresa),
-        _declaracoes(db, empresa),
+        nivel_qnrcs_efetivo(empresa),
+        contexto_nucleo.declaracoes_dos_controlos(db, empresa),
         ator_de(utilizador, "conetores"),
     )
     registar_acao(
@@ -252,8 +152,8 @@ def _verificar(fonte: str, request: Request, utilizador, db, cli):
 
 
 def _remover(fonte: str, request: Request, utilizador, db, cli):
-    resultado = _executar(
-        _cliente(cli).remover, str(utilizador.empresa_id), fonte, ator_de(utilizador, "conetores")
+    resultado = executar_conetor(
+        cliente_ou_503(cli).remover, str(utilizador.empresa_id), fonte, ator_de(utilizador, "conetores")
     )
     registar_acao(
         db, acao=Acao.CONETOR_REMOVIDO, empresa_id=utilizador.empresa_id,
@@ -279,8 +179,8 @@ def configurar_m365(
     db: SessionDep,
     cli: ConetorClient | None = ConetorDep,
 ):
-    resultado = _executar(
-        _cliente(cli).configurar, str(utilizador.empresa_id), _M365, dados.model_dump(),
+    resultado = executar_conetor(
+        cliente_ou_503(cli).configurar, str(utilizador.empresa_id), _M365, dados.model_dump(),
         ator_de(utilizador, "conetores"),
     )
     # Auditoria SEM a credencial — regista-se apenas que foi substituída.
@@ -355,8 +255,8 @@ def configurar_ad_direto(
         "nome_tls": dados.nome_tls.strip(),
         "utilizador": dados.utilizador.strip(),
     }
-    resultado = _executar(
-        _cliente(cli).configurar_ligacao_direta,
+    resultado = executar_conetor(
+        cliente_ou_503(cli).configurar_ligacao_direta,
         str(utilizador.empresa_id),
         _AD,
         parametros,
@@ -398,8 +298,8 @@ def desligar_ad_direto(
     # Em SaaS não há ligação direta a desligar: sem isto ficava na trilha um
     # "desligada" de uma ligação que nunca existiu.
     _so_onprem()
-    resultado = _executar(
-        _cliente(cli).voltar_ao_ficheiro, str(utilizador.empresa_id), _AD, ator_de(utilizador, "conetores")
+    resultado = executar_conetor(
+        cliente_ou_503(cli).voltar_ao_ficheiro, str(utilizador.empresa_id), _AD, ator_de(utilizador, "conetores")
     )
     registar_acao(
         db, acao=Acao.CONETOR_CONFIGURADO, empresa_id=utilizador.empresa_id,
@@ -439,13 +339,19 @@ def verificar_ad(
 def coletor_ad(utilizador: CurrentUserDep, cli: ConetorClient | None = ConetorDep):
     """O script vem do sidecar (a versão que o leitor dele entende) com o
     SHA-256, para o cliente confirmar o que vai correr."""
-    r = _executar(_cliente(cli).obter_coletor, str(utilizador.empresa_id), _AD)
+    r = executar_conetor(cliente_ou_503(cli).obter_coletor, str(utilizador.empresa_id), _AD)
+    try:
+        # ASCII por construção (o PowerShell 5.1 lê scripts sem BOM como ANSI).
+        script = r["script"].decode("ascii")
+    except UnicodeDecodeError as exc:
+        # O sidecar respondeu com um script que não é o que se combinou: é uma
+        # resposta que o núcleo não consegue usar, e não um defeito do núcleo.
+        raise HTTPException(status_code=502, detail={"codigo": "conetor_erro"}) from exc
     return {
         "nome_ficheiro": r["nome_ficheiro"],
         "sha256": r["sha256"],
         "versao": r["versao"],
-        # ASCII por construção (o PowerShell 5.1 lê scripts sem BOM como ANSI).
-        "script": r["script"].decode("ascii"),
+        "script": script,
     }
 
 
@@ -468,23 +374,20 @@ def carregar_coletor_ad(
     desvios, contradições e computadores por conhecer propostos ao inventário.
     Passa pela mesma cancela das importações (tamanho, tipo, assinatura)."""
     from app.premium.importacao_client import get_importacao_client
-    from app.premium.importacao_router import _cliente as _cliente_importacao
-    from app.premium.importacao_router import _executar as _executar_importacao
-    from app.premium.importacao_router import _validar_conteudo
     from app.shared.dependencies import get_empresa_ativa
 
-    c = _cliente_importacao(get_importacao_client())
+    c = cliente_ou_503(get_importacao_client())
     conteudo = ficheiro.file.read()
-    _validar_conteudo(conteudo, ficheiro.content_type or "")
+    validar_conteudo(conteudo, ficheiro.content_type or "")
     sha256 = hashlib.sha256(conteudo).hexdigest()
     empresa = get_empresa_ativa(db, utilizador)
-    resultado = _executar_importacao(
+    resultado = executar_importacao(
         c.importar_coletor_ad,
         str(utilizador.empresa_id),
         conteudo,
         {"nome_ficheiro": ficheiro.filename or "", "sha256": sha256, "locale": locale},
-        _perfil_qnrcs(empresa),
-        _declaracoes(db, empresa),
+        nivel_qnrcs_efetivo(empresa),
+        contexto_nucleo.declaracoes_dos_controlos(db, empresa),
         ator_de(utilizador, "conetores"),
         travoes_confirmados,
     )

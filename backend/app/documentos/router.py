@@ -21,8 +21,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/documentos", tags=["Documentos"])
 
-# Diretório raiz dos templates: backend/data/templates/
-_TEMPLATES_ROOT = (Path(__file__).resolve().parents[2] / "data" / "templates").resolve()
+# Diretório raiz dos templates: backend/modelos/. Fica fora de `data/`, que na
+# instalação é um volume de dados do utilizador: um volume já criado esconde o
+# que a imagem traz, e os modelos novos nunca chegariam a quem atualiza.
+_TEMPLATES_ROOT = (Path(__file__).resolve().parents[2] / "modelos").resolve()
 _CATALOGO_FILE = _TEMPLATES_ROOT / "catalogo.json"
 _LOCALES_DISPONIVEIS = frozenset({"pt", "en"})
 _LOCALE_FALLBACK = "pt"
@@ -80,19 +82,24 @@ def listar_documentos(
 ):
     """
     Devolve o catálogo de templates com indicação de disponibilidade no servidor.
-    O campo `disponivel` indica se o ficheiro DOCX está presente em disco.
+    `lang` escolhe o idioma do título e da descrição; `disponivel` diz, por
+    idioma, se o ficheiro DOCX está presente em disco (cada modelo tem um botão
+    por idioma, por isso a falta de um não pode esconder o outro).
     """
     locale = _locale_efectivo(lang)
     catalogo = _ler_catalogo()
 
     resultado = []
     for item in catalogo:
-        caminho = _resolver_caminho_seguro(item, locale)
+        disponivel = {}
+        for idioma in sorted(_LOCALES_DISPONIVEIS):
+            caminho = _resolver_caminho_seguro(item, idioma)
+            disponivel[idioma] = caminho is not None and caminho.exists()
         resultado.append({
             "id": item["id"],
             "titulo": item["titulo"].get(locale, item["titulo"].get(_LOCALE_FALLBACK, "")),
             "descricao": item["descricao"].get(locale, item["descricao"].get(_LOCALE_FALLBACK, "")),
-            "disponivel": caminho is not None and caminho.exists(),
+            "disponivel": disponivel,
             "locale": locale,
         })
     return resultado

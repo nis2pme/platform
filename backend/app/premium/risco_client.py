@@ -12,20 +12,19 @@ from functools import lru_cache
 
 from app.config import get_settings
 from app.premium.client import ClienteSidecar
+from app.premium.conversao import ator_pb, documento_to_dict
+
+
+def _mapa_de_maturidades(maturidades: dict | None) -> dict[str, str]:
+    """O mapa {controlo → nível de maturidade} como o contrato o leva (texto).
+
+    O sidecar nunca lê a base do núcleo: é por aqui que sabe a maturidade de cada
+    controlo para calcular o risco residual.
+    """
+    return {k: str(v) for k, v in (maturidades or {}).items()}
 
 
 # ── Conversões protobuf → dict ────────────────────────────────────────────────
-
-def _ator_pb(premium_pb2, ator: dict | None):
-    """Constrói a message Ator (identidade de quem age) para os RPCs de escrita.
-    None → campo ausente (o sidecar trata como âmbito total)."""
-    if not ator:
-        return None
-    return premium_pb2.Ator(
-        id=ator.get("id", ""),
-        nome=ator.get("nome", ""),
-        ambito=ator.get("ambito", ""),
-    )
 
 
 def _tratamento_to_dict(pb) -> dict:
@@ -84,9 +83,8 @@ def _cenario_to_dict(pb) -> dict:
         "porque": pb.porque,
         "ameaca": pb.ameaca,
         "vulnerabilidade": pb.vulnerabilidade,
-        "origem": pb.origem,
-        "natureza": pb.natureza,
-        "intencao": pb.intencao,
+        # Os códigos do catálogo: o router resolve-os em controlos da empresa e
+        # não os devolve.
         "controlos_sugeridos": list(pb.controlos_sugeridos),
     }
 
@@ -112,27 +110,10 @@ def _painel_to_dict(pb) -> dict:
         "abertos": pb.abertos,
         "acima_tolerado": pb.acima_tolerado,
         "por_reavaliar": pb.por_reavaliar,
+        "acima_tolerado_residual": pb.acima_tolerado_residual,
         "matriz": [
             {"probabilidade": c.probabilidade, "impacto": c.impacto, "total": c.total}
             for c in pb.matriz
-        ],
-    }
-
-
-def _documento_to_dict(pb) -> dict:
-    return {
-        "titulo": pb.titulo,
-        "subtitulo": pb.subtitulo,
-        "data_geracao": pb.data_geracao,
-        "controlos": list(pb.controlos),
-        "secoes": [
-            {
-                "titulo": s.titulo,
-                "texto": s.texto,
-                "cabecalho": list(s.cabecalho),
-                "linhas": [list(l.celulas) for l in s.linhas],
-            }
-            for s in pb.secoes
         ],
     }
 
@@ -149,17 +130,39 @@ def _definicoes_to_dict(pb) -> dict:
     }
 
 
+_NUMEROS_DAS_DEFINICOES = (
+    "limiar_tratar",
+    "limiar_urgente",
+    "periodicidade_altos",
+    "periodicidade_moderados",
+    "periodicidade_baixos",
+)
+
+
 class RiscoClient(ClienteSidecar):
     """Fala com o RiscoService do sidecar. Stub criado de forma lazy."""
 
     _NOME_STUB = "RiscoServiceStub"
 
-    def listar(self, tenant_id: str, estado: str, ativo_id: str, limite: int, offset: int) -> dict:
+    def listar(
+        self,
+        tenant_id: str,
+        estado: str,
+        ativo_id: str,
+        limite: int,
+        offset: int,
+        maturidades: dict | None = None,
+    ) -> dict:
         from app.premium.proto import premium_pb2  # type: ignore
 
         resp = self._ensure_stub().ListarRiscos(
             premium_pb2.ListarRiscosReq(
-                tenant_id=tenant_id, estado=estado, ativo_id=ativo_id, limite=limite, offset=offset
+                tenant_id=tenant_id,
+                estado=estado,
+                ativo_id=ativo_id,
+                limite=limite,
+                offset=offset,
+                maturidade_controlos=_mapa_de_maturidades(maturidades),
             )
         )
         return {"riscos": [_risco_to_dict(r) for r in resp.riscos], "total": resp.total}
@@ -171,7 +174,7 @@ class RiscoClient(ClienteSidecar):
             premium_pb2.RiscoRef(
                 tenant_id=tenant_id,
                 id=risco_id,
-                maturidade_controlos={k: str(v) for k, v in (maturidades or {}).items()},
+                maturidade_controlos=_mapa_de_maturidades(maturidades),
             )
         )
         return _risco_to_dict(resp)
@@ -196,7 +199,7 @@ class RiscoClient(ClienteSidecar):
             dono_nome=dados.get("dono_nome", ""),
             justificacao=dados.get("justificacao", ""),
             cenario_chave=dados.get("cenario_chave", ""),
-            ator=_ator_pb(premium_pb2, ator),
+            ator=ator_pb(premium_pb2, ator),
         )
         return _risco_to_dict(self._ensure_stub().GuardarRisco(pb))
 
@@ -213,7 +216,7 @@ class RiscoClient(ClienteSidecar):
 
         self._ensure_stub().EliminarRisco(
             premium_pb2.RiscoRef(
-                tenant_id=tenant_id, id=risco_id, ator=_ator_pb(premium_pb2, ator)
+                tenant_id=tenant_id, id=risco_id, ator=ator_pb(premium_pb2, ator)
             )
         )
 
@@ -237,7 +240,7 @@ class RiscoClient(ClienteSidecar):
                 justificacao=dados.get("justificacao", ""),
                 avaliador_id=por_id,
                 avaliador_nome=por_nome,
-                ator=_ator_pb(premium_pb2, ator),
+                ator=ator_pb(premium_pb2, ator),
             )
         )
         return _risco_to_dict(resp)
@@ -272,25 +275,32 @@ class RiscoClient(ClienteSidecar):
             data_alvo=dados.get("data_alvo") or "",
             responsavel_id=dados.get("responsavel_id", ""),
             responsavel_nome=dados.get("responsavel_nome", ""),
-            ator=_ator_pb(premium_pb2, ator),
+            ator=ator_pb(premium_pb2, ator),
         )
         return _tratamento_to_dict(self._ensure_stub().GuardarTratamento(pb))
 
     def eliminar_tratamento(
-        self, tenant_id: str, trat_id: str, ator: dict | None = None
+        self, tenant_id: str, risco_id: str, trat_id: str, ator: dict | None = None
     ) -> None:
         from app.premium.proto import premium_pb2  # type: ignore
 
         self._ensure_stub().EliminarTratamento(
             premium_pb2.TratamentoRef(
-                tenant_id=tenant_id, id=trat_id, ator=_ator_pb(premium_pb2, ator)
+                tenant_id=tenant_id,
+                id=trat_id,
+                risco_id=risco_id,
+                ator=ator_pb(premium_pb2, ator),
             )
         )
 
-    def obter_painel(self, tenant_id: str) -> dict:
+    def obter_painel(self, tenant_id: str, maturidades: dict | None = None) -> dict:
         from app.premium.proto import premium_pb2  # type: ignore
 
-        resp = self._ensure_stub().ObterPainel(premium_pb2.PainelRiscoReq(tenant_id=tenant_id))
+        resp = self._ensure_stub().ObterPainel(
+            premium_pb2.PainelRiscoReq(
+                tenant_id=tenant_id, maturidade_controlos=_mapa_de_maturidades(maturidades)
+            )
+        )
         return _painel_to_dict(resp)
 
     def obter_definicoes(self, tenant_id: str) -> dict:
@@ -306,15 +316,15 @@ class RiscoClient(ClienteSidecar):
 
         pb = premium_pb2.Definicoes(
             tenant_id=tenant_id,
-            limiar_tratar=int(dados.get("limiar_tratar", 10)),
-            limiar_urgente=int(dados.get("limiar_urgente", 15)),
             aprovador=dados.get("aprovador", ""),
             data_aprovacao=dados.get("data_aprovacao", "") or "",
-            periodicidade_altos=int(dados.get("periodicidade_altos", 3)),
-            periodicidade_moderados=int(dados.get("periodicidade_moderados", 6)),
-            periodicidade_baixos=int(dados.get("periodicidade_baixos", 12)),
-            ator=_ator_pb(premium_pb2, ator),
+            ator=ator_pb(premium_pb2, ator),
         )
+        # Só o que veio: um número não enviado leva o valor por omissão do sidecar
+        # (um 0 enviado é um valor, e o sidecar recusa-o).
+        for campo in _NUMEROS_DAS_DEFINICOES:
+            if dados.get(campo) is not None:
+                setattr(pb, campo, int(dados[campo]))
         return _definicoes_to_dict(self._ensure_stub().GuardarDefinicoes(pb))
 
     def obter_atencao(self, tenant_id: str, locale: str) -> list[dict]:
@@ -328,13 +338,20 @@ class RiscoClient(ClienteSidecar):
             for i in resp.itens
         ]
 
-    def gerar_documento(self, tenant_id: str, tipo: str, locale: str) -> dict:
+    def gerar_documento(
+        self, tenant_id: str, tipo: str, locale: str, maturidades: dict | None = None
+    ) -> dict:
         from app.premium.proto import premium_pb2  # type: ignore
 
         resp = self._ensure_stub().GerarDocumento(
-            premium_pb2.DocumentoReq(tenant_id=tenant_id, tipo=tipo, locale=locale)
+            premium_pb2.DocumentoReq(
+                tenant_id=tenant_id,
+                tipo=tipo,
+                locale=locale,
+                maturidade_controlos=_mapa_de_maturidades(maturidades),
+            )
         )
-        return _documento_to_dict(resp)
+        return documento_to_dict(resp)
 
 
 @lru_cache

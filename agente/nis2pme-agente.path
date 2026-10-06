@@ -1,0 +1,11 @@
+# NIS2PME — acorda o agente quando o interface deixa um pedido de atualização.
+# @INSTALL_DIR@ é substituído pelo instalador.
+[Unit]
+Description=NIS2PME - pedido de atualizacao pelo interface
+
+[Path]
+PathExists=@INSTALL_DIR@/atualizacao/pedido/pedido.txt
+Unit=nis2pme-agente.service
+
+[Install]
+WantedBy=multi-user.target

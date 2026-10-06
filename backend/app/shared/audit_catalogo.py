@@ -240,6 +240,7 @@ _DEFINICOES: tuple[tuple[str, str, str, str, bool], ...] = (
     (Acao.FORNECEDOR_ATUALIZADO, _F.FORNECEDORES, "Fornecedor", _I, False),
     (Acao.FORNECEDOR_ELIMINADO, _F.FORNECEDORES, "Fornecedor", _A, False),
     (Acao.FORNECEDOR_AVALIADO, _F.FORNECEDORES, "Fornecedor", _I, False),
+    (Acao.FORNECEDOR_RESPONSAVEL_ATRIBUIDO, _F.FORNECEDORES, "Fornecedor", _I, False),
 
     # --- Formação -----------------------------------------------------------
     (Acao.FORMACAO_CRIADA, _F.FORMACAO, "Formacao", _I, False),
@@ -292,6 +293,10 @@ _DEFINICOES: tuple[tuple[str, str, str, str, bool], ...] = (
     # Descer o TLS para HTTP ou trocar o certificado muda o que protege as sessões.
     (Acao.SISTEMA_HTTPS_CONFIGURADO, _F.SISTEMA, "Sistema", _C, False),
     (Acao.SISTEMA_ATUALIZACOES_CONFIGURADAS, _F.SISTEMA, "Sistema", _A, False),
+    # Código novo a correr como root no anfitrião, pedido de dentro da app.
+    (Acao.SISTEMA_ATUALIZACAO_PEDIDA, _F.SISTEMA, "Sistema", _C, False),
+    (Acao.SISTEMA_ATUALIZACAO_CONCLUIDA, _F.SISTEMA, "Sistema", _C, False),
+    (Acao.SISTEMA_ATUALIZACAO_FALHADA, _F.SISTEMA, "Sistema", _C, False),
     (Acao.LICENCA_INSTALADA, _F.SISTEMA, "Sistema", _C, False),
     # A própria trilha: um mês saiu da janela, ou alguém a levou para fora.
     (Acao.AUDIT_PURGADO, _F.SISTEMA, "AuditLog", _A, False),

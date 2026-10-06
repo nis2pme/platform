@@ -45,7 +45,7 @@ class Settings(BaseSettings):
 
     # --- Aplicação ---
     APP_NAME: str = "NIS2PME"
-    APP_VERSION: str = "0.4.0"
+    APP_VERSION: str = "0.4.1"
     DEBUG: bool = False
     # Activar Swagger UI / ReDoc explicitamente, independente do flag DEBUG.
     # Em produção deve ser False mesmo que DEBUG fique True acidentalmente (CWE-215).
@@ -99,12 +99,13 @@ class Settings(BaseSettings):
     TLS_CERT_PATH: str = ""   # caminho do certificado (modo custom)
     TLS_KEY_PATH: str = ""    # caminho da chave privada (modo custom)
 
-    @field_validator("SAAS_TRIAL_INTERNAL_TOKEN", "CORE_SUSPEND_TOKEN", mode="before")
+    @field_validator("SAAS_TRIAL_INTERNAL_TOKEN", "CORE_SUSPEND_TOKEN", "RESEND_API_KEY", mode="before")
     @classmethod
-    def ler_token_de_ficheiro(cls, v, info):
-        """Os tokens partilhados com outros serviços chegam em ficheiro (`<NOME>_FILE`,
+    def ler_segredo_de_ficheiro(cls, v, info):
+        """Os segredos partilhados com outros serviços chegam em ficheiro (`<NOME>_FILE`,
         os `secrets:` do compose), fora do ambiente do processo; com o ficheiro, manda
-        ele. Sem ele, vale o valor do ambiente ou do .env, como antes."""
+        ele. Sem ele, vale o valor do ambiente ou do .env, como antes. Todo o campo
+        daqui que o gen-secrets.sh guarda em segredos/ tem de estar nesta lista."""
         if os.getenv(f"{info.field_name}_FILE"):
             from app.shared.segredo import ler_segredo
 
@@ -131,6 +132,23 @@ class Settings(BaseSettings):
     # apagados ANTES de criar um novo (a retenção nunca deixa o disco encher).
     BACKUP_RETENCAO: int = 7
     UPDATE_CHECK_URL: str = "https://update.nis2pme.pt/v1/check-updates"
+    # Pasta partilhada com o agente de atualização do anfitrião: `pedido/` (escreve
+    # o backend) e `estado/` (escreve o agente; entra só em leitura).
+    ATUALIZACAO_DIR: str = "/app/atualizacao"
+    # Canal de atualizações: `stable` (as instalações de clientes) ou `dev` (as de
+    # desenvolvimento do fornecedor, que seguem builds de teste). O canal `dev` só
+    # recebe resposta com o token certo e com um manifesto assinado para esse canal;
+    # uma instalação `stable` nunca aceita nada de `dev`, mesmo que alguém o repita.
+    UPDATE_CHANNEL: str = "stable"
+    UPDATE_CHANNEL_TOKEN: str = ""
+
+    @field_validator("UPDATE_CHANNEL")
+    @classmethod
+    def validar_canal_atualizacoes(cls, v: str) -> str:
+        v = (v or "stable").strip().lower()
+        if v not in ("stable", "dev"):
+            raise ValueError("UPDATE_CHANNEL deve ser 'stable' ou 'dev'")
+        return v
 
     # --- Diretório de auditores (ecossistema) ---
     # URL do serviço público que lista os auditores com selo verificado. A app
@@ -488,7 +506,7 @@ class Settings(BaseSettings):
 
     # Resend API (usado quando EMAIL_PROVIDER="resend"). Partilha a MESMA config do funil
     # saas-trial (mesma chave/remetente/URL) — um só serviço de email para toda a plataforma.
-    RESEND_API_KEY: str = Field(default="", repr=False)  # repr=False impede exposição em logs (CWE-532)
+    RESEND_API_KEY: str = Field(default="", repr=False, validate_default=True)  # repr=False impede exposição em logs (CWE-532)
     RESEND_FROM: str = "NIS2PME <noreply@nis2pme.pt>"     # remetente verificado no Resend
     RESEND_API_URL: str = "https://api.resend.com/emails"
 

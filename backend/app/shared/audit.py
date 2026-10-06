@@ -245,6 +245,7 @@ class Acao:
     FORNECEDOR_ATUALIZADO = "fornecedor.atualizado"
     FORNECEDOR_ELIMINADO = "fornecedor.eliminado"
     FORNECEDOR_AVALIADO = "fornecedor.avaliado"
+    FORNECEDOR_RESPONSAVEL_ATRIBUIDO = "fornecedor.responsavel_atribuido"
 
     # Formação (core) — PR.FC-1/2 (formação do órgão de gestão: RJC, arts. 25.º, n.º 1, al. d), e 27.º, n.º 1, al. f))
     FORMACAO_CRIADA = "formacao.criada"
@@ -304,6 +305,11 @@ class Acao:
     SISTEMA_HTTPS_CONFIGURADO = "sistema.https_configurado"
     # Ligar/desligar a verificação de atualizações (o aviso de versões de segurança).
     SISTEMA_ATUALIZACOES_CONFIGURADAS = "sistema.atualizacoes_configuradas"
+    # Atualização da instalação pelo interface: o pedido (quem, para que versão) e
+    # o desfecho que o agente do anfitrião deixou — concluída ou falhada/revertida.
+    SISTEMA_ATUALIZACAO_PEDIDA = "sistema.atualizacao_pedida"
+    SISTEMA_ATUALIZACAO_CONCLUIDA = "sistema.atualizacao_concluida"
+    SISTEMA_ATUALIZACAO_FALHADA = "sistema.atualizacao_falhada"
     # Ficheiro de licença premium instalado pela UI (on-prem). Muda o que a
     # instalação pode fazer; fica com o identificador, o plano e o termo.
     LICENCA_INSTALADA = "sistema.licenca_instalada"

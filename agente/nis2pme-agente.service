@@ -1,0 +1,26 @@
+# NIS2PME — agente de atualização. Corre uma vez por pedido (oneshot), como root,
+# porque fala com o Docker; por isso a unidade fecha tudo o que o agente não usa.
+# @INSTALL_DIR@ e @AGENTE_DIR@ são substituídos pelo instalador.
+[Unit]
+Description=NIS2PME - agente de atualizacao
+Wants=docker.service
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=@AGENTE_DIR@/nis2pme-agente.sh
+TimeoutStartSec=2400
+StateDirectory=nis2pme-agente
+StateDirectoryMode=0700
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ReadWritePaths=@INSTALL_DIR@ @AGENTE_DIR@
+ReadWritePaths=-/root/.docker
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

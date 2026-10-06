@@ -1,0 +1,1 @@
+import{u as a}from"./index-C_A-ZndS.js";import{J as u,L as i}from"./vue-vendor-we9dzQ92.js";function d(t,n,{novo:s=!1}={}){const r=a(),o=u(()=>{if(!r.pode(t,"operar"))return"papel";if(i(s)||!r.soAtribuidos(t,"operar"))return"";const e=i(n);return e?String(e)!==String(r.userId)?"atribuido":"":"sem_dono"});return{soLeitura:u(()=>o.value!==""),motivo:o}}export{d as u};

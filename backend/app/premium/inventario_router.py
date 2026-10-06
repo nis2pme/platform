@@ -15,18 +15,17 @@ event loop.
 """
 from __future__ import annotations
 
-import uuid
+from functools import partial
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from pydantic import BaseModel, Field
 
-from app.premium.client import (PremiumIndisponivelError,
-                                e_indisponibilidade)
-from app.premium.client import e_valor_fora_do_contrato
-from app.premium.recusas import recusa_de_licenca
-from app.premium.atores import ator_de, negar_capacidade, registar_recusa_de_recurso, resolver_pessoa
+from app.premium.atores import ator_de, negar_capacidade, resolver_pessoa
 from app.premium.dependencies import require_feature
+from app.premium.erros import executar_grpc
 from app.premium.inventario_client import InventarioClient, get_inventario_client
+from app.premium.pedido import cliente_ou_503, locale_do_pedido, uuid_ou_none
 from app.shared.audit import Acao, registar_acao
 from app.shared.capacidades import ClasseAcao, require_capability, tem_capacidade
 from app.shared.dependencies import CurrentUserDep, SessionDep
@@ -49,68 +48,64 @@ EliminarDep = Depends(require_capability("inventario", ClasseAcao.ELIMINAR))
 
 # ── Schemas de entrada (permissivos: comuns tipados + `atributos` livre) ──────
 
+# Os tetos seguem o uso (nomes curtos, uma localização de uma linha, descrições e
+# notas de uma ou duas páginas) e são os mesmos que o sidecar impõe, que é quem
+# decide. Sem eles, um ativo com campos de 1 MiB fazia a listagem (até 500 ativos
+# numa só mensagem gRPC) deixar de abrir para toda a empresa.
+_ID = Annotated[str, Field(max_length=64)]
+
+# O nome de uma pessoa externa (responsável, quem executou a sanitização) não leva
+# `max_length`: quem o limita é `resolver_pessoa`, que corta ao teto o nome novo e
+# deixa como está o que já estava guardado. Um teto aqui recusava (422) o PUT de um
+# ativo cujo responsável, importado de uma fonte ou de antes de haver tetos, passa
+# dos 200: o ecrã devolve o registo inteiro.
+
+
 class AtivoIn(BaseModel):
-    tipo: str
-    nome: str
-    descricao: str = ""
-    responsavel_id: str = ""
+    tipo: str = Field(max_length=32)
+    nome: str = Field(max_length=200)
+    descricao: str = Field("", max_length=4000)
+    responsavel_id: str = Field("", max_length=64)
     responsavel_nome: str = ""
-    localizacao: str = ""
-    estado: str = "em_uso"
+    localizacao: str = Field("", max_length=500)
+    estado: str = Field("em_uso", max_length=32)
     # A criticidade (C/I/D, valor, classe) é definida pela ação dedicada
     # POST /ativos/{id}/criticidade — não passa pelo guardar geral.
-    atributos: dict[str, str] = Field(default_factory=dict)
+    # Quais as chaves é o catálogo do tipo, no sidecar: o mais largo tem 9 campos,
+    # e cada valor é um dado curto ou uma lista escrita à mão.
+    atributos: dict[Annotated[str, Field(max_length=64)], Annotated[str, Field(max_length=1000)]] = Field(default_factory=dict, max_length=20)
 
 
 class DependenciasIn(BaseModel):
-    depende_de: list[str] = Field(default_factory=list)
+    depende_de: list[_ID] = Field(default_factory=list, max_length=200)
 
 
 class ClassificarIn(BaseModel):
     # "assistente" | "detalhado" | "manual" (validado no sidecar)
-    modo: str = "assistente"
+    modo: str = Field("assistente", max_length=32)
     confidencialidade: int = 0
     integridade: int = 0
     disponibilidade: int = 0
     valor_negocio: int = 0
-    criticidade_manual: str = ""
-    justificacao: str = ""
+    criticidade_manual: str = Field("", max_length=32)
+    justificacao: str = Field("", max_length=4000)
 
 
 class RevisaoIn(BaseModel):
-    ativo_ids: list[str] = Field(default_factory=list)
+    # Todos os ativos que uma página da lista mostra.
+    ativo_ids: list[_ID] = Field(default_factory=list, max_length=500)
 
 
 class SanitizacaoIn(BaseModel):
     # "apagado_seguro" | "disco_destruido" | "devolvido" | "sem_dados" (validado no sidecar)
-    metodo: str
-    responsavel_id: str = ""
+    metodo: str = Field(max_length=32)
+    responsavel_id: str = Field("", max_length=64)
     responsavel_nome: str = ""
-    data: str = ""     # RFC3339 (vazio = agora)
-    nota: str = ""
+    data: str = Field("", max_length=32)     # RFC3339 (vazio = agora)
+    nota: str = Field("", max_length=4000)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
-
-def _locale(request: Request) -> str:
-    """Idioma do pedido para os textos do catálogo (o frontend envia Accept-Language)."""
-    lang = (request.headers.get("Accept-Language") or "").lower()
-    return "en" if lang.startswith("en") else "pt-PT"
-
-
-def _cliente(inv: InventarioClient | None) -> InventarioClient:
-    if inv is None:
-        # Não deve acontecer (o gate exige premium on), mas fail-closed.
-        raise HTTPException(status_code=503, detail={"codigo": "premium_indisponivel"})
-    return inv
-
-
-def _uuid_ou_none(valor: str) -> uuid.UUID | None:
-    try:
-        return uuid.UUID(valor)
-    except (ValueError, TypeError):
-        return None
-
 
 def _nome_do_ativo(inv, tenant: str, ativo_id: str) -> str | None:
     """
@@ -122,7 +117,7 @@ def _nome_do_ativo(inv, tenant: str, ativo_id: str) -> str | None:
     enfeitar o registo é muito pior do que as duas.
     """
     try:
-        ativo = _executar(_cliente(inv).obter_ativo, tenant, ativo_id, "")
+        ativo = _executar(cliente_ou_503(inv).obter_ativo, tenant, ativo_id, "")
         return ativo.get("nome") or None
     except Exception:  # noqa: BLE001 — o nome é um extra, nunca um requisito
         return None
@@ -134,65 +129,9 @@ def _exigir_delegar(utilizador, request: Request | None = None) -> None:
         raise negar_capacidade(utilizador, "inventario", ClasseAcao.DELEGAR, request)
 
 
-def _executar(fn, *args, utilizador=None):
-    """Faz a chamada gRPC e traduz os erros do
-    sidecar em HTTP. Códigos estáveis para o frontend traduzir.
-
-    `utilizador` só nas escritas: a recusa de âmbito do sidecar (registo não
-    atribuído ao ator) fica na trilha."""
-    try:
-        return fn(*args)
-    except HTTPException:
-        raise
-    except PremiumIndisponivelError:
-        # O sidecar não está utilizável: canal por montar, material de TLS em
-        # falta, transporte ausente. É indisponibilidade do módulo, não avaria da
-        # plataforma — e a diferença é a que o cliente precisa de ver para saber
-        # se age (renovar a licença, verificar a rede) ou se reporta um defeito.
-        # Antes escapava daqui e saía 500 em todas as rotas premium.
-        raise HTTPException(status_code=503, detail={"codigo": "premium_indisponivel"})
-    except Exception as exc:  # noqa: BLE001 — traduzido abaixo
-        if e_valor_fora_do_contrato(exc):
-            raise HTTPException(status_code=400, detail={"codigo": "valor_fora_de_intervalo"}) from exc
-        recusa = recusa_de_licenca(exc)
-        if recusa is not None:
-            raise recusa from exc
-        try:
-            import grpc  # type: ignore
-        except ImportError:
-            raise
-        if isinstance(exc, grpc.RpcError):
-            code = exc.code()
-            if code == grpc.StatusCode.NOT_FOUND:
-                raise HTTPException(status_code=404, detail={"codigo": "nao_encontrado"})
-            if code == grpc.StatusCode.PERMISSION_DENIED:
-                # Âmbito do ator: o registo não lhe está atribuído.
-                if utilizador is not None:
-                    registar_recusa_de_recurso(utilizador, "inventario")
-                raise HTTPException(
-                    status_code=403, detail={"codigo": "sem_permissao_recurso"}
-                )
-            if code == grpc.StatusCode.INVALID_ARGUMENT:
-                raise HTTPException(
-                    status_code=400,
-                    detail={"codigo": "inventario_invalido", "msg": exc.details()},
-                )
-            if code == grpc.StatusCode.FAILED_PRECONDITION:
-                # Estado que impede a ação, corrigível por quem pediu → 409.
-                raise HTTPException(
-                    status_code=409,
-                    detail={"codigo": "estado_invalido", "msg": exc.details()},
-                )
-            if e_indisponibilidade(exc):
-                # Sidecar em baixo ou pendurado. O 502 dizia «o upstream
-                # respondeu mal»; aqui não respondeu de todo. Sem isto, a mesma
-                # avaria saía 502 ou 503 conforme a cache de entitlements
-                # estivesse quente — e um alerta não se constrói sobre isso.
-                raise HTTPException(
-                    status_code=503, detail={"codigo": "premium_indisponivel"}
-                )
-            raise HTTPException(status_code=502, detail={"codigo": "inventario_erro"})
-        raise
+# `utilizador` só nas escritas: a recusa de âmbito do sidecar (registo não
+# atribuído ao ator) fica na trilha.
+_executar = partial(executar_grpc, modulo="inventario")
 
 
 # ── Endpoints de leitura ─────────────────────────────────────────────────────
@@ -204,7 +143,7 @@ def listar_tipos(
     inv: InventarioClient | None = InventarioDep,
 ):
     tenant = str(utilizador.empresa_id)
-    return _executar(_cliente(inv).listar_tipos, tenant, _locale(request))
+    return _executar(cliente_ou_503(inv).listar_tipos, tenant, locale_do_pedido(request))
 
 
 @router.get("/ativos", summary="Listar ativos (filtro por tipo, paginado)")
@@ -218,7 +157,7 @@ def listar_ativos(
 ):
     tenant = str(utilizador.empresa_id)
     return _executar(
-        _cliente(inv).listar_ativos, tenant, tipo, _locale(request), limite, offset
+        cliente_ou_503(inv).listar_ativos, tenant, tipo, locale_do_pedido(request), limite, offset
     )
 
 
@@ -229,7 +168,7 @@ def obter_painel(
     inv: InventarioClient | None = InventarioDep,
 ):
     tenant = str(utilizador.empresa_id)
-    return _executar(_cliente(inv).obter_painel, tenant, _locale(request))
+    return _executar(cliente_ou_503(inv).obter_painel, tenant, locale_do_pedido(request))
 
 
 @router.get("/ativos/{ativo_id}", summary="Ficha de um ativo")
@@ -240,7 +179,7 @@ def obter_ativo(
     inv: InventarioClient | None = InventarioDep,
 ):
     tenant = str(utilizador.empresa_id)
-    return _executar(_cliente(inv).obter_ativo, tenant, ativo_id, _locale(request))
+    return _executar(cliente_ou_503(inv).obter_ativo, tenant, ativo_id, locale_do_pedido(request))
 
 
 @router.get("/ativos/{ativo_id}/procedencia", summary="O que as importações mudaram neste ativo")
@@ -278,7 +217,7 @@ def gerar_documento(
     from app.shared.dependencies import get_empresa_ativa
 
     tenant = str(utilizador.empresa_id)
-    doc = _executar(_cliente(inv).gerar_documento, tenant, tipo, _locale(request))
+    doc = _executar(cliente_ou_503(inv).gerar_documento, tenant, tipo, locale_do_pedido(request))
     # Enriquecer com hash estável + controlo-alvo para o "anexar como evidência".
     return enriquecer_documento(db, get_empresa_ativa(db, utilizador), doc)
 
@@ -310,7 +249,7 @@ def criar_ativo(
     payload["responsavel_nome"] = resp_nome
 
     resultado = _executar(
-        _cliente(inv).guardar_ativo, tenant, payload, "", ator_de(utilizador, "inventario"),
+        cliente_ou_503(inv).guardar_ativo, tenant, payload, "", ator_de(utilizador, "inventario"),
         utilizador=utilizador,
     )
     registar_acao(
@@ -319,7 +258,7 @@ def criar_ativo(
         empresa_id=utilizador.empresa_id,
         utilizador_id=utilizador.id,
         entidade_tipo="Ativo",
-        entidade_id=_uuid_ou_none(resultado.get("id", "")),
+        entidade_id=uuid_ou_none(resultado.get("id", "")),
         dados_novos=payload,
         request=request,
     )
@@ -330,7 +269,7 @@ def criar_ativo(
             empresa_id=utilizador.empresa_id,
             utilizador_id=utilizador.id,
             entidade_tipo="Ativo",
-            entidade_id=_uuid_ou_none(resultado.get("id", "")),
+            entidade_id=uuid_ou_none(resultado.get("id", "")),
             # O nome do ATIVO tem de ir: sem ele, o registo só guardava o nome
             # do novo responsável e quem lia a trilha via uma pessoa onde devia
             # ver o ativo a que ela foi atribuída.
@@ -356,7 +295,7 @@ def atualizar_ativo(
     tenant = str(utilizador.empresa_id)
     # Estado atual do sidecar: necessário para detetar mudança de responsável
     # (delegação) sem confiar no cliente. Custo de 1 RPC extra aceite.
-    atual = _executar(_cliente(inv).obter_ativo, tenant, ativo_id, _locale(request))
+    atual = _executar(cliente_ou_503(inv).obter_ativo, tenant, ativo_id, locale_do_pedido(request))
     resp_id, resp_nome, mudou = resolver_pessoa(
         db,
         utilizador,
@@ -372,7 +311,7 @@ def atualizar_ativo(
     payload["responsavel_nome"] = resp_nome
 
     resultado = _executar(
-        _cliente(inv).guardar_ativo, tenant, payload, ativo_id, ator_de(utilizador, "inventario"),
+        cliente_ou_503(inv).guardar_ativo, tenant, payload, ativo_id, ator_de(utilizador, "inventario"),
         utilizador=utilizador,
     )
     registar_acao(
@@ -381,7 +320,7 @@ def atualizar_ativo(
         empresa_id=utilizador.empresa_id,
         utilizador_id=utilizador.id,
         entidade_tipo="Ativo",
-        entidade_id=_uuid_ou_none(ativo_id),
+        entidade_id=uuid_ou_none(ativo_id),
         dados_novos=payload,
         request=request,
     )
@@ -392,7 +331,7 @@ def atualizar_ativo(
             empresa_id=utilizador.empresa_id,
             utilizador_id=utilizador.id,
             entidade_tipo="Ativo",
-            entidade_id=_uuid_ou_none(ativo_id),
+            entidade_id=uuid_ou_none(ativo_id),
             dados_novos={
                 "nome": payload.get("nome"),
                 "responsavel_id": resp_id,
@@ -417,8 +356,11 @@ def eliminar_ativo(
     inv: InventarioClient | None = InventarioDep,
 ):
     tenant = str(utilizador.empresa_id)
+    # O nome lê-se antes: depois de apagado, já não há onde o ir buscar, e uma
+    # eliminação sem nome na trilha não diz o que desapareceu.
+    nome = _nome_do_ativo(inv, tenant, ativo_id)
     _executar(
-        _cliente(inv).eliminar_ativo, tenant, ativo_id,
+        cliente_ou_503(inv).eliminar_ativo, tenant, ativo_id,
         ator_de(utilizador, "inventario", ClasseAcao.ELIMINAR),
         utilizador=utilizador,
     )
@@ -428,7 +370,8 @@ def eliminar_ativo(
         empresa_id=utilizador.empresa_id,
         utilizador_id=utilizador.id,
         entidade_tipo="Ativo",
-        entidade_id=_uuid_ou_none(ativo_id),
+        entidade_id=uuid_ou_none(ativo_id),
+        dados_novos={"nome": nome},
         request=request,
     )
 
@@ -448,7 +391,7 @@ def definir_dependencias(
 ):
     tenant = str(utilizador.empresa_id)
     _executar(
-        _cliente(inv).definir_dependencias,
+        cliente_ou_503(inv).definir_dependencias,
         tenant,
         ativo_id,
         dados.depende_de,
@@ -461,7 +404,7 @@ def definir_dependencias(
         empresa_id=utilizador.empresa_id,
         utilizador_id=utilizador.id,
         entidade_tipo="Ativo",
-        entidade_id=_uuid_ou_none(ativo_id),
+        entidade_id=uuid_ou_none(ativo_id),
         dados_novos={
             "nome": _nome_do_ativo(inv, tenant, ativo_id),
             "depende_de": dados.depende_de,
@@ -486,11 +429,11 @@ def classificar_criticidade(
 ):
     tenant = str(utilizador.empresa_id)
     resultado = _executar(
-        _cliente(inv).classificar_criticidade,
+        cliente_ou_503(inv).classificar_criticidade,
         tenant,
         ativo_id,
         dados.model_dump(),
-        _locale(request),
+        locale_do_pedido(request),
         ator_de(utilizador, "inventario"),
         utilizador=utilizador,
     )
@@ -500,7 +443,7 @@ def classificar_criticidade(
         empresa_id=utilizador.empresa_id,
         utilizador_id=utilizador.id,
         entidade_tipo="Ativo",
-        entidade_id=_uuid_ou_none(ativo_id),
+        entidade_id=uuid_ou_none(ativo_id),
         # A resposta traz o ativo inteiro — o nome vem de graça e é ele que diz
         # a quem lê a trilha qual dos ativos foi classificado.
         dados_novos={"nome": resultado.get("nome"), **dados.model_dump()},
@@ -524,7 +467,7 @@ def registar_revisao(
     tenant = str(utilizador.empresa_id)
     ator = ator_de(utilizador, "inventario")
     _executar(
-        _cliente(inv).registar_revisao, tenant, dados.ativo_ids, ator["id"], ator["nome"], ator,
+        cliente_ou_503(inv).registar_revisao, tenant, dados.ativo_ids, ator["id"], ator["nome"], ator,
         utilizador=utilizador,
     )
     registar_acao(
@@ -561,7 +504,7 @@ def registar_sanitizacao(
         db, utilizador, dados.responsavel_id, dados.responsavel_nome
     )
     _executar(
-        _cliente(inv).registar_sanitizacao,
+        cliente_ou_503(inv).registar_sanitizacao,
         tenant,
         ativo_id,
         dados.metodo,
@@ -578,7 +521,7 @@ def registar_sanitizacao(
         empresa_id=utilizador.empresa_id,
         utilizador_id=utilizador.id,
         entidade_tipo="Ativo",
-        entidade_id=_uuid_ou_none(ativo_id),
+        entidade_id=uuid_ou_none(ativo_id),
         dados_novos={
             "metodo": dados.metodo,
             "responsavel_nome": resp_nome,

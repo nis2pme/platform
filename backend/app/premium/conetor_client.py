@@ -18,6 +18,7 @@ from functools import lru_cache
 
 from app.config import get_settings
 from app.premium.client import ClienteSidecar
+from app.premium.conversao import ator_pb
 
 # As features das verificações técnicas (uma por ligação ou ferramenta). O core
 # só precisa de as conhecer para o portão "tem alguma?" do router e do tick:
@@ -26,16 +27,6 @@ FEATURES_CONETORES = ("connector_m365", "connector_ad", "connector_gvm", "connec
 
 
 # ── Conversões protobuf → dict ────────────────────────────────────────────────
-
-def _ator_pb(premium_pb2, ator: dict | None):
-    """Constrói a message Ator (identidade de quem age). None → campo ausente."""
-    if not ator:
-        return None
-    return premium_pb2.Ator(
-        id=ator.get("id", ""),
-        nome=ator.get("nome", ""),
-        ambito=ator.get("ambito", ""),
-    )
 
 
 def _estado_to_dict(pb) -> dict:
@@ -170,7 +161,7 @@ class ConetorClient(ClienteSidecar):
                 # Vazio = manter as metas guardadas (editam-se à parte).
                 sinais_config_json=dados.get("sinais_config_json", ""),
                 ativo=bool(dados.get("ativo", True)),
-                ator=_ator_pb(premium_pb2, ator),
+                ator=ator_pb(premium_pb2, ator),
             )
         )
         return _estado_to_dict(resp)
@@ -202,7 +193,7 @@ class ConetorClient(ClienteSidecar):
                 credencial_tipo="secret",
                 intervalo_horas=intervalo_horas,
                 ativo=ativo,
-                ator=_ator_pb(premium_pb2, ator),
+                ator=ator_pb(premium_pb2, ator),
             )
         )
         return _estado_to_dict(resp)
@@ -215,7 +206,7 @@ class ConetorClient(ClienteSidecar):
         resp = self._ensure_stub().ConfigurarConetor(
             premium_pb2.ConfigConetorReq(
                 tenant_id=tenant_id, tipo=tipo, modo="ficheiro", ativo=True,
-                ator=_ator_pb(premium_pb2, ator),
+                ator=ator_pb(premium_pb2, ator),
             )
         )
         return _estado_to_dict(resp)
@@ -247,7 +238,7 @@ class ConetorClient(ClienteSidecar):
                 tenant_id=tenant_id,
                 perfil=perfil,
                 declaracoes=declaracoes,
-                ator=_ator_pb(premium_pb2, ator),
+                ator=ator_pb(premium_pb2, ator),
                 tipo=tipo,
             )
         )
@@ -266,7 +257,7 @@ class ConetorClient(ClienteSidecar):
         from app.premium.proto import premium_pb2  # type: ignore
 
         self._ensure_stub().RemoverConetor(
-            premium_pb2.RemoverConetorReq(tenant_id=tenant_id, ator=_ator_pb(premium_pb2, ator), tipo=tipo)
+            premium_pb2.RemoverConetorReq(tenant_id=tenant_id, ator=ator_pb(premium_pb2, ator), tipo=tipo)
         )
         return {"ok": True}
 
@@ -298,7 +289,7 @@ class ConetorClient(ClienteSidecar):
                 modo="politica",
                 sinais_config_json=sinais_config_json,
                 ativo=ativo,
-                ator=_ator_pb(premium_pb2, ator),
+                ator=ator_pb(premium_pb2, ator),
             )
         )
         return _estado_to_dict(resp)
@@ -336,21 +327,64 @@ class ConetorClient(ClienteSidecar):
             "avisos_cenario": list(resp.avisos_cenario),
         }
 
-    def constatacoes(self, tenant_id: str, tema: str = "", locale: str = "") -> dict:
+    def constatacoes(
+        self, tenant_id: str, tema: str = "", locale: str = "", declaracoes: dict | None = None
+    ) -> dict:
+        """`declaracoes` (código do controlo → estado declarado) deixa o sidecar
+        apurar as contradições com o estado de agora."""
         from app.premium.proto import premium_pb2  # type: ignore
 
         resp = self._ensure_stub().Constatacoes(
-            premium_pb2.ConstatacoesReq(tenant_id=tenant_id, tema=tema, locale=locale)
+            premium_pb2.ConstatacoesReq(
+                tenant_id=tenant_id, tema=tema, locale=locale, declaracoes=declaracoes or {}
+            )
         )
         return {"sinais": [_sinal_to_dict(s) for s in resp.sinais]}
 
-    def constatacoes_dos_controlos(self, tenant_id: str, codigos: list[str], locale: str = "") -> dict:
+    def constatacoes_dos_controlos(
+        self, tenant_id: str, codigos: list[str], locale: str = "", declaracoes: dict | None = None
+    ) -> dict:
         from app.premium.proto import premium_pb2  # type: ignore
 
         resp = self._ensure_stub().ConstatacoesDosControlos(
-            premium_pb2.ControlosConstatacoesReq(tenant_id=tenant_id, codigos=codigos, locale=locale)
+            premium_pb2.ControlosConstatacoesReq(
+                tenant_id=tenant_id, codigos=codigos, locale=locale, declaracoes=declaracoes or {}
+            )
         )
         return {"sinais": [_sinal_to_dict(s) for s in resp.sinais]}
+
+    def avisos_do_risco(
+        self,
+        tenant_id: str,
+        codigos: list[str],
+        ativo_id: str = "",
+        locale: str = "",
+        declaracoes: dict | None = None,
+    ) -> dict:
+        """O que as verificações dizem de um risco: os controlos (por código) que
+        falham a meta e, havendo ativo, as vulnerabilidades graves por corrigir."""
+        from app.premium.proto import premium_pb2  # type: ignore
+
+        resp = self._ensure_stub().AvisosDoRisco(
+            premium_pb2.AvisosRiscoReq(
+                tenant_id=tenant_id,
+                codigos=codigos,
+                ativo_id=ativo_id,
+                locale=locale,
+                declaracoes=declaracoes or {},
+            )
+        )
+        return {
+            "controlos_a_falhar": [
+                {"codigo": c.codigo, "sinais": [_sinal_to_dict(s) for s in c.sinais]}
+                for c in resp.controlos_a_falhar
+            ],
+            "ativo": (
+                {"criticas": resp.ativo.criticas, "observado_em": resp.ativo.observado_em}
+                if resp.HasField("ativo")
+                else None
+            ),
+        }
 
     def detalhe_sinal(
         self, tenant_id: str, fonte: str, sinal: str, ator: dict | None = None, locale: str = ""
@@ -359,7 +393,7 @@ class ConetorClient(ClienteSidecar):
 
         resp = self._ensure_stub().DetalheSinal(
             premium_pb2.DetalheSinalReq(
-                tenant_id=tenant_id, sinal=sinal, ator=_ator_pb(premium_pb2, ator), fonte=fonte, locale=locale
+                tenant_id=tenant_id, sinal=sinal, ator=ator_pb(premium_pb2, ator), fonte=fonte, locale=locale
             )
         )
         return {"sinal": _sinal_to_dict(resp.sinal), "detalhe_json": resp.detalhe_json}
@@ -392,7 +426,7 @@ class ConetorClient(ClienteSidecar):
 
         self._ensure_stub().ResolverEventoConetor(
             premium_pb2.ResolverEventoConetorReq(
-                tenant_id=tenant_id, evento_id=evento_id, nota=nota, ator=_ator_pb(premium_pb2, ator)
+                tenant_id=tenant_id, evento_id=evento_id, nota=nota, ator=ator_pb(premium_pb2, ator)
             )
         )
         return {"ok": True}
@@ -421,9 +455,9 @@ class ConetorClient(ClienteSidecar):
                     "veredicto_minimo": c.veredicto_minimo,
                     "veredicto_politica": c.veredicto_politica,
                     "razao": c.razao,
-                    "resumo_json": c.resumo_json,
                     "controlos": list(c.controlos),
                     "controlos_evidencia": list(c.controlos_evidencia),
+                    "corpo_evidencia_json": c.corpo_evidencia_json,
                     "verificado_em": c.verificado_em or None,
                 }
                 for c in resp.constatacoes
@@ -482,7 +516,7 @@ class ConetorClient(ClienteSidecar):
                 decisao=decisao,
                 motivo=motivo,
                 incidente_id=incidente_id,
-                ator=_ator_pb(premium_pb2, ator),
+                ator=ator_pb(premium_pb2, ator),
             )
         )
         return _alerta_to_dict(resp)

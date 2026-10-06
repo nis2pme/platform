@@ -18,6 +18,35 @@
 # ============================================================
 set -e
 
+# Agente de atualização pelo interface (precisa de root e de systemd): instala-se por
+# omissão, para que o botão «Atualizar» do interface funcione. Sem root ou sem systemd
+# o instalador avisa e a instalação fica como estava (o interface mostra o comando).
+#   --agente      instala/atualiza o agente (é o comportamento por omissão)
+#   --sem-agente  não o instala
+#
+# Canal de atualizações (só para instalações de desenvolvimento do fornecedor):
+#   --canal dev   segue os builds de teste. Exige NIS2PME_MESTRA_PUBKEY (a chave pública
+#                 que assina o canal dev) e NIS2PME_UPDATE_CHANNEL_TOKEN (o token do canal).
+# Sem isto, ou com --canal stable, a instalação segue a versão dos clientes.
+# Chave pública mestra de produção (a que assina as versões dos clientes).
+MESTRA_PUBKEY_PADRAO="zoz286THo5fYFur5w1gfihxSCWupsS33fdnkcCaN0wU"
+AGENTE_PEDIDO=""
+CANAL_SEL="${NIS2PME_CANAL:-}"
+_anterior=""
+for _arg in "$@"; do
+    case "$_arg" in
+        --agente) AGENTE_PEDIDO=1 ;;
+        --sem-agente) AGENTE_PEDIDO=0 ;;
+        --canal=*) CANAL_SEL=${_arg#--canal=} ;;
+    esac
+    if [ "$_anterior" = "--canal" ]; then CANAL_SEL=$_arg; fi
+    _anterior=$_arg
+done
+case "$CANAL_SEL" in
+    ""|stable|dev) ;;
+    *) echo "[nis2pme] ERRO: --canal aceita 'stable' ou 'dev' / --canal accepts 'stable' or 'dev'"; exit 1 ;;
+esac
+
 # Versão a instalar/atualizar: uma tag de release (ex.: NIS2PME_VERSION=v0.4.0) fixa
 # o compose a essa versão e exige o checksum publicado ao lado; "main" é o que
 # está publicado agora, sem checksum — o que sempre foi.
@@ -131,6 +160,17 @@ mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 echo "[nis2pme] $(t "Diretório de instalação" "Install directory"): $INSTALL_DIR"
 
+# Uma instalação feita com sudo deixa a pasta (e o .env, de uid 10001) fora do alcance
+# de um utilizador normal. Sem esta verificação o primeiro descarregamento falha com um
+# "curl: (23)" que não diz nada sobre permissões.
+if [ ! -w . ]; then
+    echo ""
+    echo "[nis2pme] $(t "ERRO: sem permissão de escrita em" "ERROR: no write permission on") $INSTALL_DIR"
+    echo "          $(t "A instalação foi criada por outro utilizador (provavelmente root)." "The installation was created by another user (probably root).")"
+    echo "          $(t "Volte a correr o comando com sudo (… | sudo sh)." "Run the command again with sudo (… | sudo sh).")"
+    exit 1
+fi
+
 # Deteção de instalação existente: o .env vive na pasta de instalação e só é gerado na
 # primeira execução. A sua presença distingue uma atualização de uma instalação nova.
 EXISTING_INSTALL=0
@@ -167,6 +207,18 @@ if [ "$EXISTING_INSTALL" = 0 ]; then
         echo "=============================================="
         exit 1
     fi
+fi
+
+# Pastas do pedido de atualização pelo interface: o backend escreve o pedido numa e
+# lê o progresso da outra (montada só em leitura). Têm de existir antes do `up`,
+# senão o Docker cria-as com o dono errado. Só depois dos travões acima: uma
+# execução recusada não deixa pastas para trás.
+mkdir -p atualizacao/pedido atualizacao/estado
+if [ "$(id -u)" = 0 ]; then
+    chown root:root atualizacao atualizacao/estado 2>/dev/null || true
+    chown 10001:10001 atualizacao/pedido 2>/dev/null || true
+    chmod 755 atualizacao atualizacao/estado 2>/dev/null || true
+    chmod 700 atualizacao/pedido 2>/dev/null || true
 fi
 
 _fetch() {
@@ -379,6 +431,48 @@ case "$DB_PW" in
         ;;
 esac
 
+# Canal de atualizações: o pedido de linha de comandos manda; senão, o que a instalação
+# já tem; senão, o dos clientes. Uma instalação `dev` só se configura com a chave que
+# assina esse canal e o token que o abre (nunca com a chave de produção por omissão).
+[ -n "$CANAL_SEL" ] || CANAL_SEL=$(_ler_env UPDATE_CHANNEL)
+[ -n "$CANAL_SEL" ] || CANAL_SEL=stable
+
+# Põe `CHAVE=valor` no .env sem trocar o ficheiro (está montado no contentor): tira as
+# linhas antigas dessa chave e acrescenta a nova. Os valores são só [A-Za-z0-9._-].
+_tirar_env() {
+    ( umask 077; grep -v "^$1=" .env > .env.novo 2>/dev/null || true; cat .env.novo > .env; rm -f .env.novo )
+}
+_definir_env() {
+    _tirar_env "$1"
+    printf '%s=%s\n' "$1" "$2" >> .env
+}
+
+if [ "$CANAL_SEL" = "dev" ]; then
+    _pub_dev="${NIS2PME_MESTRA_PUBKEY:-$(_ler_env NIS2PME_MESTRA_PUBKEY)}"
+    _tok_dev="${NIS2PME_UPDATE_CHANNEL_TOKEN:-$(_ler_env UPDATE_CHANNEL_TOKEN)}"
+    if [ "$(printf '%s' "$_pub_dev" | grep -Ec '^[A-Za-z0-9_-]{43}$' || true)" != 1 ] \
+        || [ "$_pub_dev" = "$MESTRA_PUBKEY_PADRAO" ]; then
+        echo "[nis2pme] $(t "ERRO: o canal dev precisa de NIS2PME_MESTRA_PUBKEY com a chave pública do canal dev (não a de produção)." "ERROR: the dev channel needs NIS2PME_MESTRA_PUBKEY set to the dev channel's public key (not the production one).")"
+        exit 1
+    fi
+    if [ "$(printf '%s' "$_tok_dev" | grep -Ec '^[A-Za-z0-9._-]{16,128}$' || true)" != 1 ]; then
+        echo "[nis2pme] $(t "ERRO: o canal dev precisa de NIS2PME_UPDATE_CHANNEL_TOKEN (16 a 128 carateres, só letras, números, ponto, hífen e sublinhado)." "ERROR: the dev channel needs NIS2PME_UPDATE_CHANNEL_TOKEN (16 to 128 characters: letters, digits, dot, hyphen, underscore).")"
+        exit 1
+    fi
+    _definir_env UPDATE_CHANNEL dev
+    _definir_env UPDATE_CHANNEL_TOKEN "$_tok_dev"
+    _definir_env NIS2PME_MESTRA_PUBKEY "$_pub_dev"
+    NIS2PME_MESTRA_PUBKEY=$_pub_dev
+    echo "[nis2pme] $(t "Canal de atualizações: dev (instalação de desenvolvimento)." "Update channel: dev (development installation).")"
+elif [ -n "$(_ler_env UPDATE_CHANNEL)" ]; then
+    # Voltar ao canal dos clientes: tira o canal, o token e a chave de dev (a de
+    # produção é a omissão do compose).
+    _tirar_env UPDATE_CHANNEL
+    _tirar_env UPDATE_CHANNEL_TOKEN
+    _tirar_env NIS2PME_MESTRA_PUBKEY
+    echo "[nis2pme] $(t "Canal de atualizações: clientes (stable)." "Update channel: customers (stable).")"
+fi
+
 # Fixar o nome do projeto Compose. Por defeito é o nome da pasta: mudar a pasta de
 # sítio trocaria o prefixo dos volumes e a app arrancaria com dados vazios. Fixa-se
 # o nome que JÁ está em uso (lido do container), nunca um nome novo.
@@ -577,6 +671,122 @@ else
     echo "=============================================="
     echo "  $(t "Registo completo:" "Full log:")  docker compose logs -f backend     ($(t "dentro de" "inside") ${INSTALL_DIR})"
     echo "=============================================="
+fi
+
+# ------------------------------------------------------------
+# 7. Agente de atualização pelo interface
+# ------------------------------------------------------------
+# Corre no anfitrião (unidade systemd), sem porta de rede, e só executa código com
+# assinatura da chave mestra NIS2PME. A chave e a pasta de instalação ficam em
+# /etc/nis2pme, que só o root escreve: o .env é escrito pela app e nunca é fonte de
+# confiança. Nenhum contentor ganha acesso ao Docker.
+AGENTE_LIB="/usr/local/lib/nis2pme"
+AGENTE_CONF="/etc/nis2pme/agente.conf"
+
+_agente_possivel() {
+    [ "$(id -u)" = 0 ] && command -v systemctl > /dev/null 2>&1 && [ -d /run/systemd/system ]
+}
+
+_versao_em_execucao() {
+    # Um `exec` não herda as chaves que o arranque gera: carregam-se antes da configuração.
+    docker compose exec -T backend python -c 'from app.shared.segredos_cli import carregar_segredos_da_instalacao as c; c(); from app.config import get_settings; print(get_settings().APP_VERSION)' \
+        < /dev/null 2>/dev/null | tail -n1 | tr -d '\r\n '
+}
+
+_agente_decidir() {
+    [ "$AGENTE_PEDIDO" = 0 ] && return 1
+    return 0
+}
+
+_agente_instalar() {
+    _dir_ok=$(printf '%s' "$INSTALL_DIR" | grep -Ec '^[A-Za-z0-9_./-]+$' || true)
+    if [ "$_dir_ok" != 1 ]; then
+        echo "[nis2pme] $(t "AVISO: o agente não suporta espaços nem carateres especiais no caminho da instalação." "WARNING: the agent does not support spaces or special characters in the installation path.")"
+        return 1
+    fi
+    _versao=$(_versao_em_execucao)
+    if [ -z "$_versao" ]; then
+        echo "[nis2pme] $(t "AVISO: não foi possível ler a versão em execução — o agente não foi instalado." "WARNING: could not read the running version — the agent was not installed.")"
+        return 1
+    fi
+    _pub="${NIS2PME_MESTRA_PUBKEY:-$MESTRA_PUBKEY_PADRAO}"
+    if [ "$(printf '%s' "$_pub" | grep -Ec '^[A-Za-z0-9_-]{43}$' || true)" != 1 ]; then
+        echo "[nis2pme] $(t "AVISO: chave pública inválida — o agente não foi instalado." "WARNING: invalid public key — the agent was not installed.")"
+        return 1
+    fi
+    _proj=$(docker inspect nis2pme_db --format '{{index .Config.Labels "com.docker.compose.project"}}' 2>/dev/null || true)
+    [ -n "$_proj" ] || _proj=nis2pme
+    # Ficheiros de compose em uso (overlays de quem os usa). Só nomes dentro da pasta.
+    _cf=""
+    _ant=$IFS; IFS=:
+    for _f in $(_ler_env COMPOSE_FILE); do
+        if [ "$(printf '%s' "$_f" | grep -Ec '^[A-Za-z0-9_.-]+$' || true)" = 1 ] && [ -f "$INSTALL_DIR/$_f" ]; then
+            _cf="${_cf:+$_cf:}$_f"
+        fi
+    done
+    IFS=$_ant
+    [ -n "$_cf" ] || _cf="docker-compose.yml"
+
+    mkdir -p "$AGENTE_LIB" /etc/nis2pme /var/lib/nis2pme-agente
+    chmod 755 "$AGENTE_LIB" /etc/nis2pme
+    chmod 700 /var/lib/nis2pme-agente
+    for _f in nis2pme-agente.sh nis2pme-agente.path nis2pme-agente.service; do
+        _fetch "agente/$_f" "$AGENTE_LIB/$_f.novo" || {
+            echo "[nis2pme] $(t "ERRO: não foi possível descarregar" "ERROR: could not download") agente/$_f"
+            rm -f "$AGENTE_LIB"/*.novo
+            return 1
+        }
+    done
+    chmod 755 "$AGENTE_LIB/nis2pme-agente.sh.novo"
+    mv -f "$AGENTE_LIB/nis2pme-agente.sh.novo" "$AGENTE_LIB/nis2pme-agente.sh"
+    for _u in nis2pme-agente.path nis2pme-agente.service; do
+        sed -e "s#@INSTALL_DIR@#$INSTALL_DIR#g" -e "s#@AGENTE_DIR@#$AGENTE_LIB#g" "$AGENTE_LIB/$_u.novo" > "/etc/systemd/system/$_u"
+        chmod 644 "/etc/systemd/system/$_u"
+        rm -f "$AGENTE_LIB/$_u.novo"
+    done
+
+    {
+        echo "INSTALL_DIR=$INSTALL_DIR"
+        echo "PROJECT=$_proj"
+        echo "PUBKEY=$_pub"
+        [ "$CANAL_SEL" != "dev" ] || echo "CANAL=dev"
+        echo "COMPOSE_FILES=$_cf"
+        [ -z "${NIS2PME_AGENTE_BASE_URL:-}" ] || echo "BASE_URL=$NIS2PME_AGENTE_BASE_URL"
+    } > "$AGENTE_CONF.novo"
+    chown root:root "$AGENTE_CONF.novo"; chmod 644 "$AGENTE_CONF.novo"
+    mv -f "$AGENTE_CONF.novo" "$AGENTE_CONF"
+
+    # O que o agente vai executar como root não pode ser reescrito por quem não é root.
+    chmod go-w "$INSTALL_DIR" 2>/dev/null || true
+    for _f in $(printf '%s' "$_cf" | tr ':' ' '); do
+        chown root:root "$INSTALL_DIR/$_f" 2>/dev/null || true
+        chmod 644 "$INSTALL_DIR/$_f" 2>/dev/null || true
+    done
+    install -d -m 755 -o root -g root "$INSTALL_DIR/atualizacao" "$INSTALL_DIR/atualizacao/estado"
+    install -d -m 700 -o 10001 -g 10001 "$INSTALL_DIR/atualizacao/pedido"
+
+    "$AGENTE_LIB/nis2pme-agente.sh" --definir-versao "$_versao" || return 1
+    "$AGENTE_LIB/nis2pme-agente.sh" --registar || return 1
+    systemctl daemon-reload
+    systemctl enable --now nis2pme-agente.path > /dev/null 2>&1 || return 1
+    echo "[nis2pme] $(t "Agente de atualização ativo (versão em execução: " "Update agent enabled (running version: ")$_versao)."
+    echo "          $(t "Para o retirar: sudo $AGENTE_LIB/nis2pme-agente.sh --desinstalar" "To remove it: sudo $AGENTE_LIB/nis2pme-agente.sh --desinstalar")"
+}
+
+if [ "$_saudavel" = 1 ]; then
+    if _agente_possivel; then
+        if _agente_decidir; then
+            _agente_instalar || echo "[nis2pme] $(t "O agente de atualização não ficou ativo; a instalação em si está feita." "The update agent is not active; the installation itself is done.")"
+        elif [ -f "$AGENTE_CONF" ]; then
+            # Uma atualização manual sobe o piso de versões do agente: sem isto, um
+            # pedido antigo (assinado) poderia fazer a instalação recuar.
+            _v=$(_versao_em_execucao)
+            [ -z "$_v" ] || "$AGENTE_LIB/nis2pme-agente.sh" --definir-versao "$_v" || true
+        fi
+    elif [ "$AGENTE_PEDIDO" != 0 ]; then
+        echo "[nis2pme] $(t "AVISO: o agente de atualização precisa de root e de systemd; sem ele o botão «Atualizar» do interface não funciona." "WARNING: the update agent needs root and systemd; without it the interface's \"Update\" button will not work.")"
+        echo "          $(t "Para o instalar: curl -fsSL https://raw.githubusercontent.com/nis2pme/platform/main/start_nis2pme.sh | sudo sh" "To install it: curl -fsSL https://raw.githubusercontent.com/nis2pme/platform/main/start_nis2pme.sh | sudo sh")"
+    fi
 fi
 
 APP_URL_VAL=$(grep '^APP_URL=' .env | cut -d'=' -f2- | tr -d '"'"'" | tr -d ' ')

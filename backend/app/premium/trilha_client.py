@@ -11,7 +11,24 @@ from __future__ import annotations
 
 import logging
 
+from app.premium import client as premium_client
+from app.premium.client import ClienteSidecar
+
 logger = logging.getLogger(__name__)
+
+
+class TrilhaClient(ClienteSidecar):
+    _NOME_STUB = "PremiumProviderStub"
+
+    def testemunhar(self, cabecas: list[dict]):
+        from app.premium.proto import premium_pb2  # type: ignore
+
+        return self._ensure_stub().TestemunharTrilha(
+            premium_pb2.TestemunharTrilhaReq(
+                cabecas=[premium_pb2.CabecaTrilha(**c) for c in cabecas]
+            ),
+            timeout=15,
+        )
 
 
 def testemunhar(cabecas: list[dict]) -> dict | None:
@@ -23,21 +40,9 @@ def testemunhar(cabecas: list[dict]) -> dict | None:
     if not settings.PREMIUM_ENABLED or not settings.PREMIUM_SIDECAR_ADDR:
         return None
     try:
-        import grpc
-
-        from app.premium.client import criar_canal_sidecar
-        from app.premium.proto import premium_pb2, premium_pb2_grpc
-
-        canal = criar_canal_sidecar(grpc, settings.PREMIUM_SIDECAR_ADDR)
-        try:
-            resp = premium_pb2_grpc.PremiumProviderStub(canal).TestemunharTrilha(
-                premium_pb2.TestemunharTrilhaReq(
-                    cabecas=[premium_pb2.CabecaTrilha(**c) for c in cabecas]
-                ),
-                timeout=15,
-            )
-        finally:
-            canal.close()
+        resp = premium_client.cliente_partilhado(
+            TrilhaClient, settings.PREMIUM_SIDECAR_ADDR
+        ).testemunhar(cabecas)
     except Exception as erro:  # noqa: BLE001 — fail-soft: o tick tenta na hora seguinte
         logger.warning("Testemunho da trilha: o sidecar não respondeu (%s).", erro)
         return None

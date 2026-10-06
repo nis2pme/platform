@@ -90,6 +90,8 @@ curl -fsSL https://raw.githubusercontent.com/nis2pme/platform/main/start_nis2pme
 
 No fim, abre no browser o URL que aparece (ex.: `https://192.168.1.50`) para correr o **assistente de configuração**.
 
+> 🔄 **Atualizar pelo interface.** Corre o instalador como root num servidor com systemd (`curl -fsSL … | sudo bash`) e ele instala também o agente de atualização, que faz funcionar o botão **Atualizar** em **Definições → Atualizações**. Sem root ou sem systemd a instalação funciona na mesma, mas esse botão não; o instalador avisa quando é o caso. Usa `--sem-agente` para não o instalar.
+
 > ℹ️ **O one-liner corre sem perguntas.** Ao ser enviado para o `bash` não tem terminal, por isso usa defaults: o menu de idioma é saltado (**Português**) e é gerado um **certificado temporário self-signed** (o browser avisa na 1.ª visita — é normal). Para escolheres o idioma e o modo TLS (certificado próprio / atrás de proxy / self-signed), descarrega e corre antes: `sh start_nis2pme.sh`. Podes definir ou substituir o certificado no assistente de primeira configuração.
 
 ### Opção 2 — Docker Compose (um pouco mais de controlo)

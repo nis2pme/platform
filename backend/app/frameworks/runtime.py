@@ -238,27 +238,30 @@ _TIPO_TO_QNRCS = {
     "essencial": "elevado",
 }
 
+NIVEIS_QNRCS = ("basico", "substancial", "elevado")
+
+
+def nivel_qnrcs_efetivo(empresa: Empresa) -> str:
+    """O nível QNRCS que vale para a empresa: o que ela escolheu e, sem escolha, o
+    derivado do tipo de entidade. Um valor que não se reconhece cai no mais baixo.
+
+    É a regra única: os limiares do perfil, o nível-alvo dos controlos e o perfil
+    enviado às verificações técnicas leem-na daqui.
+    """
+    valor = empresa.nivel_qnrcs or empresa.tipo_entidade
+    valor = getattr(valor, "value", valor) or ""
+    if valor in NIVEIS_QNRCS:
+        return valor
+    return _TIPO_TO_QNRCS.get(valor, "basico")
+
 
 def load_thresholds_map(
     db: Session,
     framework: Framework,
     empresa: Empresa,
 ) -> dict[uuid.UUID, int]:
-    # Usa nivel_qnrcs se definido; senão, deriva de tipo_entidade via _TIPO_TO_QNRCS.
     # auto_assign_for nos ComplianceProfiles usa terminologia QNRCS: basico/substancial/elevado.
-    if empresa.nivel_qnrcs:
-        assign_for = (
-            empresa.nivel_qnrcs.value
-            if hasattr(empresa.nivel_qnrcs, "value")
-            else empresa.nivel_qnrcs
-        )
-    else:
-        tipo = (
-            empresa.tipo_entidade.value
-            if hasattr(empresa.tipo_entidade, "value")
-            else empresa.tipo_entidade
-        )
-        assign_for = _TIPO_TO_QNRCS.get(tipo, "basico")
+    assign_for = nivel_qnrcs_efetivo(empresa)
 
     profile = db.exec(
         select(ComplianceProfile).where(

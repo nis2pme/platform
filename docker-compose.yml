@@ -47,7 +47,7 @@ services:
       - nis2pme_net
 
   backend:
-    image: ghcr.io/nis2pme/backend:latest
+    image: ghcr.io/nis2pme/backend:${NIS2PME_TAG:-latest}
     container_name: nis2pme_backend
     restart: unless-stopped
     # Hardening base: sem escalonamento, limites, e só as capabilities do arranque.
@@ -91,6 +91,11 @@ services:
       - ./.env:/app/.env
       # Custom TLS certificate (optional — populated by the installer when TLS_MODE=custom)
       - ./certs:/app/host_certs:ro
+      # Atualização pelo interface: o backend deixa o pedido numa pasta e lê o
+      # progresso da outra, só de leitura. Quem age sobre o Docker é o agente do
+      # anfitrião — nenhum contentor tem acesso ao socket.
+      - ./atualizacao/pedido:/app/atualizacao/pedido
+      - ./atualizacao/estado:/app/atualizacao/estado:ro
     depends_on:
       db:
         condition: service_healthy
@@ -104,7 +109,7 @@ services:
       - nis2pme_net
 
   frontend:
-    image: ghcr.io/nis2pme/frontend:latest
+    image: ghcr.io/nis2pme/frontend:${NIS2PME_TAG:-latest}
     container_name: nis2pme_frontend
     restart: unless-stopped
     # nginx liga :80/:443 (porta privilegiada) e faz uid-drop dos workers → precisa de

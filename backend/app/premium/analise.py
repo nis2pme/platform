@@ -21,9 +21,9 @@ from sqlmodel import Session
 
 from app.auth.models import Utilizador
 from app.empresas.models import Empresa
-from app.premium.client import (AnaliseLimiteError, PremiumClient,
-                                PremiumIndisponivelError, e_indisponibilidade)
+from app.premium.client import AnaliseLimiteError, PremiumClient
 from app.premium.context import construir_contexto_controlo, get_ce_or_404
+from app.premium.erros import traduzir_erro_grpc
 from app.premium.schemas import AnaliseIASchema, EstadoAnaliseIA, RelatorioGapsSchema
 from app.premium.sealing import CifraPorConfigurarError
 from app.shared.audit import Acao, ResultadoAcao, registar_acao
@@ -41,24 +41,21 @@ def _parse_dt(valor: str | None) -> datetime:
         return datetime.now(timezone.utc)
 
 
+def _erro_proprio_da_ia(codigo, detalhes: str) -> HTTPException | None:
+    """O que só o assistente de IA diz de um erro do sidecar."""
+    if getattr(codigo, "name", "") == "PERMISSION_DENIED":
+        # A guarda de licença do sidecar recusou (o gate do núcleo já tinha
+        # passado com a cache): o módulo não está ativo. A IA não tem âmbito de
+        # ator, por isso uma recusa de permissão é sempre esta.
+        return HTTPException(
+            status_code=402, detail={"codigo": "premium_inativo", "feature": "ai_assistant"}
+        )
+    return None
+
+
 def _traduzir_erro(exc: Exception) -> HTTPException | None:
     """Erros do sidecar que têm resposta própria (e não um 500 genérico)."""
-    if isinstance(exc, PremiumIndisponivelError) or e_indisponibilidade(exc):
-        return HTTPException(status_code=503, detail={"codigo": "premium_indisponivel"})
-    try:
-        import grpc  # type: ignore
-    except ImportError:
-        return None
-    if isinstance(exc, grpc.RpcError):
-        codigo = exc.code()
-        if codigo == grpc.StatusCode.PERMISSION_DENIED:
-            # A guarda de licença do sidecar recusou (o gate do core já tinha
-            # passado com a cache): o módulo não está ativo.
-            return HTTPException(status_code=402, detail={"codigo": "premium_inativo", "feature": "ai_assistant"})
-        if codigo == grpc.StatusCode.FAILED_PRECONDITION and "licenca_so_leitura" in (exc.details() or ""):
-            return HTTPException(status_code=403, detail={"codigo": "licenca_so_leitura", "feature": "ai_assistant"})
-        return HTTPException(status_code=502, detail={"codigo": "premium_erro"})
-    return None
+    return traduzir_erro_grpc(exc, "premium", extra=_erro_proprio_da_ia)
 
 
 def _job_to_schema(job: dict) -> AnaliseIASchema:
@@ -98,7 +95,7 @@ def solicitar_analise(
     # envelope limita a ~24 MiB): tudo isso ocupa a vaga das operações pesadas,
     # partilhada com o dossiê e o scrypt dos backups.
     with LIMITE_OPERACOES_PESADAS.ocupar():
-        job, meta = _montar_e_submeter(db, controlo_empresa_id, empresa, premium)
+        job, meta = _montar_e_submeter(db, controlo_empresa_id, empresa, utilizador, premium)
 
     resultado = (
         ResultadoAcao.SUCESSO
@@ -124,12 +121,18 @@ def solicitar_analise(
 
 
 def _montar_e_submeter(
-    db: Session, controlo_empresa_id: uuid.UUID, empresa: Empresa, premium: PremiumClient
+    db: Session,
+    controlo_empresa_id: uuid.UUID,
+    empresa: Empresa,
+    utilizador: Utilizador,
+    premium: PremiumClient,
 ) -> tuple[dict, dict]:
     """Monta o contexto (evidências decifradas e seladas) e entrega-o ao sidecar.
     Devolve (job, meta)."""
     try:
         meta, evidencias_blob = construir_contexto_controlo(db, controlo_empresa_id, empresa)
+        # Quem pediu fica com o job no sidecar, para a conclusão lhe ser atribuída.
+        meta["pedido_por"] = str(utilizador.id)
     except CifraPorConfigurarError:
         # Configuração da instalação (a chave chega com a licença), não avaria:
         # o administrador tem de saber o que falta em vez de ler «erro interno».
@@ -178,13 +181,16 @@ def get_analise_por_controlo(
         return None
 
     if job.get("auditoria_pendente") and not _conclusao_ja_auditada(db, job["job_id"]):
+        # A conclusão acontece no sidecar: fica em nome de quem pediu a análise, e
+        # não de quem a observou primeiro.
+        autor_id = _quem_pediu(db, job, empresa) or utilizador.id
         if job["estado"] == EstadoAnaliseIA.CONCLUIDO.value:
             registar_acao(
                 db,
                 acao=Acao.ANALISE_IA_CONCLUIDA,
                 resultado=ResultadoAcao.SUCESSO,
                 empresa_id=empresa.id,
-                utilizador_id=utilizador.id,
+                utilizador_id=autor_id,
                 entidade_tipo="AnaliseIA",
                 entidade_id=uuid.UUID(job["job_id"]),
                 dados_novos={"controlo_empresa_id": str(controlo_empresa_id)},
@@ -199,7 +205,7 @@ def get_analise_por_controlo(
                 acao=Acao.ANALISE_IA_ERRO,
                 resultado=ResultadoAcao.FALHA,
                 empresa_id=empresa.id,
-                utilizador_id=utilizador.id,
+                utilizador_id=autor_id,
                 entidade_tipo="AnaliseIA",
                 entidade_id=uuid.UUID(job["job_id"]),
                 dados_novos=dados,
@@ -217,6 +223,20 @@ def get_analise_por_controlo(
             pass
 
     return _job_to_schema(job)
+
+
+def _quem_pediu(db: Session, job: dict, empresa: Empresa) -> uuid.UUID | None:
+    """Quem pediu a análise, se o sidecar o diz e é uma pessoa desta empresa.
+
+    Um job de antes não traz o campo, e um valor que não é uma pessoa da empresa
+    (outro tenant, um identificador estranho) não se aceita: cai em quem observou.
+    """
+    try:
+        id_ = uuid.UUID(job.get("pedido_por") or "")
+    except ValueError:
+        return None
+    pessoa = db.get(Utilizador, id_)
+    return pessoa.id if pessoa is not None and pessoa.empresa_id == empresa.id else None
 
 
 def _conclusao_ja_auditada(db: Session, job_id: str) -> bool:

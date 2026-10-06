@@ -227,6 +227,7 @@ def _job_pb_to_dict(pb) -> dict | None:
         "created_at": pb.created_at,
         "updated_at": pb.updated_at,
         "auditoria_pendente": pb.auditoria_pendente,
+        "pedido_por": pb.pedido_por or None,
     }
 
 
@@ -622,6 +623,7 @@ class GrpcTransport(ClienteSidecar, PremiumTransport):
                     nivel_minimo=meta["nivel_minimo"],
                     locale=meta["locale"],
                     idempotency_key=meta.get("idempotency_key", ""),
+                    pedido_por=meta.get("pedido_por", ""),
                 )
             )
             for i in range(0, len(evidencias), self._CHUNK_BYTES):
@@ -740,6 +742,22 @@ def _build_transport() -> PremiumTransport:
             "Definir o endereço do sidecar premium (ex.: premium-sidecar:50051)."
         )
     return GrpcTransport(settings.PREMIUM_SIDECAR_ADDR)
+
+
+# Os clientes partilhados, um por (classe, endereço). Montar um canal mTLS custa
+# ler três ficheiros PEM e um aperto de mãos TLS: quem chama muitas vezes (a
+# pesquisa, a cada tecla) não o pode fazer a cada chamada.
+_PARTILHADOS: dict[tuple[type, str], "ClienteSidecar"] = {}
+_LOCK_PARTILHADOS = threading.Lock()
+
+
+def cliente_partilhado(classe: type, addr: str):
+    """O cliente de `classe` para `addr`: um só por processo, com um só canal."""
+    with _LOCK_PARTILHADOS:
+        cliente = _PARTILHADOS.get((classe, addr))
+        if cliente is None:
+            cliente = _PARTILHADOS[(classe, addr)] = classe(addr)
+        return cliente
 
 
 @lru_cache
