@@ -79,6 +79,55 @@ _TEXTOS = {
             "Para renovar, envie-nos o código de instalação que está em Definições → Sistema → Licença.\n\n"
             "— NIS2PME (aviso automático)"
         ),
+        "assunto_premium_pronto": "[NIS2PME] Módulos premium prontos a ativar",
+        "corpo_premium_pronto": (
+            "A licença dos módulos premium já chegou e foi validada.\n\n"
+            "Para os ativar, um administrador entra na plataforma e vai a Definições → "
+            "Sistema → Módulos premium → «Ativar». A aplicação reinicia uma vez (cerca de "
+            "um minuto).\n\n"
+            "— NIS2PME (aviso automático)"
+        ),
+        "assunto_premium_recusado": "[NIS2PME] O pedido dos módulos premium foi fechado",
+        "corpo_premium_recusado": (
+            "O pedido dos módulos premium desta instalação foi fechado ({tipo}).{motivo}\n\n"
+            "Pode fazer um pedido novo em Definições → Sistema → Módulos premium.\n\n"
+            "— NIS2PME (aviso automático)"
+        ),
+        "assunto_premium_falhou": "[NIS2PME] Os módulos premium não ficaram instalados",
+        "corpo_premium_falhou": (
+            "A {etapa} dos módulos premium não terminou (código: {codigo}). {revertido}\n\n"
+            "Veja o estado em Definições → Sistema → Módulos premium.\n\n"
+            "— NIS2PME (aviso automático)"
+        ),
+        "assunto_premium_ativado": "[NIS2PME] Módulos premium ativos",
+        "corpo_premium_ativado": (
+            "Os módulos premium desta instalação estão ativos.\n\n"
+            "— NIS2PME (aviso automático)"
+        ),
+        "premium_tipos": {
+            "rejeitado": "recusado pelo fornecedor", "expirado": "30 dias sem resposta",
+            "cancelado": "cancelado", "sem_resposta": "sem resposta do serviço de licenças",
+            "desconhecido": "o serviço de licenças já não o conhece",
+        },
+        "premium_motivo": " Motivo indicado pelo fornecedor: {motivo}",
+        "premium_etapas": {"instalar": "instalação", "ativar": "ativação"},
+        "premium_revertido": "A aplicação voltou a funcionar como estava antes.",
+        "assunto_atualizacao_falhou": "[NIS2PME] Uma atualização não terminou",
+        "corpo_atualizacao_falhou": (
+            "A atualização {componente} para a versão {versao} não terminou (código: {codigo}). "
+            "{revertido}\n\n"
+            "Veja o estado em Definições → Sistema e Atualizações.\n\n"
+            "— NIS2PME (aviso automático)"
+        ),
+        "componentes": {"nucleo": "da aplicação", "premium": "dos módulos premium"},
+        "assunto_backup_incompleto": "[NIS2PME] Backup sem os dados dos módulos premium",
+        "corpo_backup_incompleto": (
+            "O backup desta instalação foi feito, mas sem os dados dos módulos premium "
+            "(inventário, riscos, fornecedores): o serviço premium não os entregou.\n\n"
+            "Confirme que os módulos premium estão a funcionar e faça um backup manual em "
+            "Definições → Sistema → Backups. Até lá, um restauro não repõe esses dados.\n\n"
+            "— NIS2PME (aviso automático)"
+        ),
         "falta_1": "falta 1 dia",
         "faltam_n": "faltam {n} dias",
         "assunto_digest": "[NIS2PME] Resumo semanal — a precisar de atenção",
@@ -127,6 +176,54 @@ _TEXTOS = {
             "keep working until {ate}; after that they become read-only (the data can still "
             "be viewed and exported).\n\n"
             "To renew, send us the installation code shown in Settings → System → License.\n\n"
+            "— NIS2PME (automatic notice)"
+        ),
+        "assunto_premium_pronto": "[NIS2PME] Premium modules ready to activate",
+        "corpo_premium_pronto": (
+            "The license for the premium modules has arrived and has been validated.\n\n"
+            "To activate them, an administrator signs in and goes to Settings → System → "
+            "Premium modules → \"Activate\". The application restarts once (about a minute).\n\n"
+            "— NIS2PME (automatic notice)"
+        ),
+        "assunto_premium_recusado": "[NIS2PME] The premium modules request was closed",
+        "corpo_premium_recusado": (
+            "The premium modules request for this installation was closed ({tipo}).{motivo}\n\n"
+            "You can make a new request in Settings → System → Premium modules.\n\n"
+            "— NIS2PME (automatic notice)"
+        ),
+        "assunto_premium_falhou": "[NIS2PME] The premium modules were not installed",
+        "corpo_premium_falhou": (
+            "The {etapa} of the premium modules did not finish (code: {codigo}). {revertido}\n\n"
+            "See the status in Settings → System → Premium modules.\n\n"
+            "— NIS2PME (automatic notice)"
+        ),
+        "assunto_premium_ativado": "[NIS2PME] Premium modules active",
+        "corpo_premium_ativado": (
+            "The premium modules of this installation are active.\n\n"
+            "— NIS2PME (automatic notice)"
+        ),
+        "premium_tipos": {
+            "rejeitado": "declined by the vendor", "expirado": "30 days without an answer",
+            "cancelado": "cancelled", "sem_resposta": "no answer from the license service",
+            "desconhecido": "the license service no longer knows it",
+        },
+        "premium_motivo": " Reason given by the vendor: {motivo}",
+        "premium_etapas": {"instalar": "installation", "ativar": "activation"},
+        "premium_revertido": "The application is running as it was before.",
+        "assunto_atualizacao_falhou": "[NIS2PME] An update did not finish",
+        "corpo_atualizacao_falhou": (
+            "The update {componente} to version {versao} did not finish (code: {codigo}). "
+            "{revertido}\n\n"
+            "See the status in Settings → System and Updates.\n\n"
+            "— NIS2PME (automatic notice)"
+        ),
+        "componentes": {"nucleo": "of the application", "premium": "of the premium modules"},
+        "assunto_backup_incompleto": "[NIS2PME] Backup without the premium modules' data",
+        "corpo_backup_incompleto": (
+            "This installation's backup was made, but without the data of the premium "
+            "modules (inventory, risks, suppliers): the premium service did not hand it over.\n\n"
+            "Check that the premium modules are running and make a manual backup in "
+            "Settings → System → Backups. Until then, a restore will not bring that data back.\n\n"
             "— NIS2PME (automatic notice)"
         ),
         "falta_1": "1 day left",
@@ -397,6 +494,95 @@ def alertar_fim_de_acesso(
         assunto.format(**valores), corpo.format(**valores),
     )
     logger.info("Email de fim de acesso despachado (empresa=%s, tipo=%s, marco=%s).", empresa_id, tipo, marco)
+    return True
+
+
+def alertar_pedido_premium(
+    db: Session,
+    *,
+    empresa_id: uuid.UUID,
+    evento: str,
+    chave_evento: str,
+    params: dict | None = None,
+) -> bool:
+    """
+    Email aos administradores sobre o pedido dos módulos premium: pronto a ativar,
+    fechado, falhou ou ativo. Uma vez por evento (`chave_evento`). Devolve True se
+    foi despachado. Os outros passos (aprovado, instalado) só ficam no centro de
+    notificações: não pedem nada a ninguém.
+    """
+    if evento not in {"pronto", "recusado", "falhou", "ativado"}:
+        return False
+    if not notificacoes_email_ativas() or not _email_da_empresa(db, empresa_id):
+        return False
+    chave = f"premium:{empresa_id}:{chave_evento}"
+    if not _registar_envio(db, empresa_id, chave):
+        return False
+    t = _TEXTOS[_locale_da_empresa(db, empresa_id)]
+    p = params or {}
+    valores = {
+        "tipo": t["premium_tipos"].get(p.get("tipo", ""), p.get("tipo", "")),
+        "motivo": t["premium_motivo"].format(motivo=p["motivo"]) if p.get("motivo") else "",
+        "etapa": t["premium_etapas"].get(p.get("etapa", ""), ""),
+        "codigo": p.get("codigo") or "",
+        "revertido": t["premium_revertido"] if p.get("revertido") else "",
+    }
+    _agendar_envio(
+        db, empresa_id, chave, _emails_por_role(db, empresa_id, (RoleUtilizador.ADMIN,)),
+        t[f"assunto_premium_{evento}"].format(**valores), t[f"corpo_premium_{evento}"].format(**valores),
+    )
+    logger.info("Email do pedido premium despachado (empresa=%s, evento=%s).", empresa_id, evento)
+    return True
+
+
+def alertar_atualizacao_falhada(
+    db: Session,
+    *,
+    empresa_id: uuid.UUID,
+    pedido_id: str,
+    params: dict,
+) -> bool:
+    """
+    Email aos administradores: uma atualização pedida pelo interface não terminou
+    (falhou ou foi revertida). Uma vez por pedido. Devolve True se foi despachado.
+    """
+    if not notificacoes_email_ativas() or not _email_da_empresa(db, empresa_id):
+        return False
+    chave = f"atualizacao:{empresa_id}:{pedido_id}"
+    if not _registar_envio(db, empresa_id, chave):
+        return False
+    t = _TEXTOS[_locale_da_empresa(db, empresa_id)]
+    valores = {
+        "componente": t["componentes"].get(params.get("componente", ""), ""),
+        "versao": params.get("versao") or "",
+        "codigo": params.get("codigo") or "",
+        "revertido": t["premium_revertido"] if params.get("revertido") else "",
+    }
+    _agendar_envio(
+        db, empresa_id, chave, _emails_por_role(db, empresa_id, (RoleUtilizador.ADMIN,)),
+        t["assunto_atualizacao_falhou"], t["corpo_atualizacao_falhou"].format(**valores),
+    )
+    logger.info("Email de atualização falhada despachado (empresa=%s).", empresa_id)
+    return True
+
+
+def alertar_backup_incompleto(db: Session, *, empresa_id: uuid.UUID) -> bool:
+    """
+    Email aos administradores: o backup saiu sem os dados dos módulos premium.
+    No máximo um por dia (o agendado é diário; os manuais não o repetem).
+    Devolve True se foi despachado.
+    """
+    if not notificacoes_email_ativas() or not _email_da_empresa(db, empresa_id):
+        return False
+    chave = f"backup_incompleto:{empresa_id}:{datetime.now(timezone.utc).date().isoformat()}"
+    if not _registar_envio(db, empresa_id, chave):
+        return False
+    t = _TEXTOS[_locale_da_empresa(db, empresa_id)]
+    _agendar_envio(
+        db, empresa_id, chave, _emails_por_role(db, empresa_id, (RoleUtilizador.ADMIN,)),
+        t["assunto_backup_incompleto"], t["corpo_backup_incompleto"],
+    )
+    logger.info("Email de backup incompleto despachado (empresa=%s).", empresa_id)
     return True
 
 

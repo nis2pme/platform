@@ -284,6 +284,8 @@ _DEFINICOES: tuple[tuple[str, str, str, str, bool], ...] = (
     (Acao.BACKUP_AGENDADO_ALTERADO, _F.BACKUPS, "Backup", _A, False),
     (Acao.BACKUP_IMPORTADO, _F.BACKUPS, "Backup", _C, False),
     (Acao.RESTAURO_EXECUTADO, _F.BACKUPS, "Backup", _C, False),
+    (Acao.BACKUP_PREMIUM_REPOSTO, _F.BACKUPS, "Backup", _C, False),
+    (Acao.BACKUP_PREMIUM_DESCARTADO, _F.BACKUPS, "Backup", _C, False),
 
     # --- Sistema ------------------------------------------------------------
     (Acao.POLITICA_ALTERADA, _F.SISTEMA, "Politica", _C, False),
@@ -298,6 +300,17 @@ _DEFINICOES: tuple[tuple[str, str, str, str, bool], ...] = (
     (Acao.SISTEMA_ATUALIZACAO_CONCLUIDA, _F.SISTEMA, "Sistema", _C, False),
     (Acao.SISTEMA_ATUALIZACAO_FALHADA, _F.SISTEMA, "Sistema", _C, False),
     (Acao.LICENCA_INSTALADA, _F.SISTEMA, "Sistema", _C, False),
+    # Pedido dos módulos premium pelo interface: instalar e ativar põem código novo
+    # a correr no anfitrião (crítico); pedir, desistir e o fecho pelo fornecedor, aviso.
+    (Acao.SISTEMA_PREMIUM_PEDIDO, _F.SISTEMA, "Sistema", _A, False),
+    (Acao.SISTEMA_PREMIUM_PEDIDO_CANCELADO, _F.SISTEMA, "Sistema", _A, False),
+    (Acao.SISTEMA_PREMIUM_PEDIDO_FECHADO, _F.SISTEMA, "Sistema", _A, False),
+    (Acao.SISTEMA_PREMIUM_INSTALACAO, _F.SISTEMA, "Sistema", _C, False),
+    (Acao.SISTEMA_PREMIUM_INSTALADO, _F.SISTEMA, "Sistema", _C, False),
+    (Acao.SISTEMA_PREMIUM_INSTALACAO_FALHADA, _F.SISTEMA, "Sistema", _C, False),
+    (Acao.SISTEMA_PREMIUM_ATIVACAO_PEDIDA, _F.SISTEMA, "Sistema", _C, False),
+    (Acao.SISTEMA_PREMIUM_ATIVADO, _F.SISTEMA, "Sistema", _C, False),
+    (Acao.SISTEMA_PREMIUM_ATIVACAO_FALHADA, _F.SISTEMA, "Sistema", _C, False),
     # A própria trilha: um mês saiu da janela, ou alguém a levou para fora.
     (Acao.AUDIT_PURGADO, _F.SISTEMA, "AuditLog", _A, False),
     (Acao.AUDIT_EXPORTADO, _F.SISTEMA, "AuditLog", _A, False),

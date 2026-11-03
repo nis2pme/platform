@@ -338,6 +338,55 @@ async def lifespan(app: FastAPI):
 
         app.state.ticks.append(asyncio.create_task(_loop_updates()))
 
+        # Desfecho de uma atualização pedida pelo interface: trilha, notificação e email
+        # aos administradores, mesmo sem ninguém no ecrã. No arranque apanha o de um
+        # núcleo que o agente acabou de substituir.
+        from app.updates.service import registar_desfecho
+
+        def _desfecho_sync() -> None:
+            with Session(engine) as _db:
+                registar_desfecho(_db)
+
+        async def _loop_desfecho_atualizacao():
+            while True:
+                try:
+                    if not em_manutencao():
+                        await asyncio.to_thread(_desfecho_sync)
+                except Exception:  # noqa: BLE001
+                    logger.exception("Registo do desfecho da atualização falhou; nova tentativa no próximo ciclo.")
+                await asyncio.sleep(300)
+
+        app.state.ticks.append(asyncio.create_task(_loop_desfecho_atualizacao()))
+
+        # Pedido dos módulos premium pelo interface, só com um pedido em aberto: ao
+        # serviço de hora a hora; com o agente a instalar ou a ativar, o progresso
+        # dele de minuto a minuto (só o ficheiro local). Logo no arranque também — é
+        # aí que o backend novo apanha o fim de uma ativação.
+        from app.premium import pedido_premium
+
+        def _pedido_premium_sync(rede: bool) -> None:
+            if not pedido_premium.em_aberto():
+                return
+            with Session(engine) as _db:
+                pedido_premium.consultar_e_avisar(_db, rede=rede)
+
+        async def _loop_pedido_premium():
+            ultima_rede = None
+            while True:
+                agora = asyncio.get_running_loop().time()
+                rede = ultima_rede is None or agora - ultima_rede >= pedido_premium.CICLO_SERVICO
+                try:
+                    if not em_manutencao():
+                        await asyncio.to_thread(_pedido_premium_sync, rede)
+                        if rede:
+                            ultima_rede = agora
+                except Exception:  # noqa: BLE001
+                    logger.exception("Consulta do pedido premium falhou; nova tentativa no próximo ciclo.")
+                em_curso = await asyncio.to_thread(pedido_premium.acao_em_curso)
+                await asyncio.sleep(pedido_premium.CICLO_AGENTE if em_curso else pedido_premium.CICLO_SERVICO)
+
+        app.state.ticks.append(asyncio.create_task(_loop_pedido_premium()))
+
         # Backup diário agendado (ligado por defeito): tick horário que age quando
         # a hora local chega à configurada e ainda não há backup do dia. O gate
         # (ativo + passphrase definida) e o dedup diário vivem no serviço — uma
@@ -547,6 +596,7 @@ from app.premium.router import router as premium_router  # noqa: E402
 from app.premium.analise_router import router as premium_analise_router  # noqa: E402
 from app.premium.inventario_router import router as premium_inventario_router  # noqa: E402
 from app.premium.risco_router import router as premium_risco_router  # noqa: E402
+from app.premium.pedido_premium_router import router as premium_pedido_router  # noqa: E402
 from app.premium.fornecedor_router import router as premium_fornecedor_router  # noqa: E402
 from app.premium.conetor_router import router as premium_conetor_router  # noqa: E402
 from app.premium.conetor_router import router_remocao as premium_conetor_remocao_router  # noqa: E402
@@ -576,6 +626,7 @@ app.include_router(premium_router, prefix="/api")
 app.include_router(premium_analise_router, prefix="/api")
 app.include_router(premium_inventario_router, prefix="/api")
 app.include_router(premium_risco_router, prefix="/api")
+app.include_router(premium_pedido_router, prefix="/api")
 app.include_router(premium_fornecedor_router, prefix="/api")
 app.include_router(premium_conetor_router, prefix="/api")
 app.include_router(premium_conetor_remocao_router, prefix="/api")

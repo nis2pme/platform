@@ -14,6 +14,12 @@ Duas metades, ligadas por um pacote assinado:
    partilhada com o anfitrião e lê o progresso que o agente de lá deixa noutra,
    só de leitura. Tudo o que vem da pasta de estado é tratado como não fiável:
    campos com formato estrito, valores desconhecidos recusados.
+
+Com os módulos premium instalados, há dois componentes. O núcleo novo serve sempre
+o premium anterior, por isso atualizam-se um de cada vez, cada um com o seu backup
+e a sua reversão: primeiro o núcleo, e quando ele arranca bem o núcleo novo pede o
+premium (se o administrador o incluiu). O premium também se atualiza sozinho (as
+versões de segurança).
 """
 from __future__ import annotations
 
@@ -49,6 +55,9 @@ _estado: dict = {
     "verificado_em": None,
     "manifesto": None,
 }
+# O que o sidecar respondeu da última vez sobre o premium (sem o token, que caduca:
+# ao aplicar pergunta-se outra vez).
+_estado_premium: dict = {"estado": None, "versao": None, "seguranca": False, "direito": None}
 
 
 def obter_instance_id() -> str:
@@ -122,20 +131,37 @@ def _b64url_decode(texto: str) -> bytes:
     return base64.urlsafe_b64decode(texto + "=" * (-len(texto) % 4))
 
 
-def verificar_manifesto(texto: object, assinatura: object, pubkey: str) -> dict | None:
-    """O manifesto, já lido, se a assinatura Ed25519 sobre os bytes exatos do
-    texto for válida para `pubkey` (32 bytes crus em base64url) e o conteúdo tiver
-    a forma esperada. Qualquer outra coisa devolve None: nunca levanta."""
+def _assinatura_valida(texto: object, assinatura: object, pubkey: str) -> bool:
+    """A assinatura Ed25519 sobre os bytes exatos do texto é válida para `pubkey`
+    (32 bytes crus em base64url)? Nunca levanta."""
     try:
         if not (isinstance(texto, str) and isinstance(assinatura, str) and pubkey):
-            return None
+            return False
         if len(texto) > _MAX_MANIFESTO:
-            return None
+            return False
         chave = Ed25519PublicKey.from_public_bytes(_b64url_decode(pubkey))
         chave.verify(_b64url_decode(assinatura), texto.encode("utf-8"))
     except (InvalidSignature, ValueError, binascii.Error, TypeError):
+        return False
+    return True
+
+
+def verificar_manifesto(texto: object, assinatura: object, pubkey: str) -> dict | None:
+    """O manifesto, já lido, se a assinatura for válida e o conteúdo tiver a forma
+    esperada. Qualquer outra coisa devolve None: nunca levanta."""
+    if not _assinatura_valida(texto, assinatura, pubkey):
         return None
     return _ler_manifesto(texto)
+
+
+def _manifesto_premium_valido(texto: object, assinatura: object, versao: str) -> bool:
+    """Um manifesto premium assinado pela raiz, desta versão. O agente confere-o
+    outra vez, por inteiro: isto só evita deixar-lhe um pedido que vai recusar."""
+    if not _assinatura_valida(texto, assinatura, get_settings().NIS2PME_MESTRA_PUBKEY):
+        return False
+    linhas = str(texto).splitlines()
+    return bool(linhas) and linhas[0] == _CABECALHO_MANIFESTO \
+        and "componente=premium" in linhas[1:] and f"versao={versao}" in linhas[1:]
 
 
 def _ler_manifesto(texto: str) -> dict | None:
@@ -160,9 +186,13 @@ def _ler_manifesto(texto: str) -> dict | None:
     canal = campos.get("canal", "stable")
     if canal not in _CANAIS:
         return None
+    # O premium mais antigo que esta versão do núcleo ainda serve (opcional).
+    if "premium_min" in campos and not _RE_VERSAO_ESTRITA.match(campos["premium_min"]):
+        return None
     return {
         "versao": campos["versao"],
         "min_origem": campos["min_origem"],
+        "premium_min": campos.get("premium_min"),
         "canal": canal,
         "critica": campos.get("critica") == "true",
         "notas": _url_notas(campos.get("notas")),
@@ -242,6 +272,29 @@ def verificar_updates_sync() -> None:
         # Aviso, não debug: uma instalação que não alcança o servidor de versões
         # nunca avisaria ninguém de uma versão de segurança, e ninguém saberia.
         logger.warning("Verificação de atualizações falhou (ignorado): %s", exc)
+    if settings.DEPLOYMENT_MODE == "onprem":
+        verificar_premium_sync()
+
+
+def _versao_simples(v: str) -> str | None:
+    """`x.y.z` de uma versão (sem pré-versão), a forma que o sidecar aceita."""
+    m = _RE_VERSAO.match((v or "").strip())
+    return ".".join(m.groups()[:3]) if m else None
+
+
+def verificar_premium_sync() -> dict:
+    """Pergunta ao sidecar pela versão premium seguinte (bloqueante). Guarda o resumo
+    para o ecrã e devolve a resposta inteira (com o token) a quem vai aplicar."""
+    from app.premium.atualizacao_client import verificar
+
+    instalada = ler_agente()["premium_versao"]
+    nucleo = _versao_simples(get_settings().APP_VERSION)
+    resposta = verificar(instalada, nucleo) if instalada and nucleo else {"estado": None}
+    _estado_premium.update(
+        estado=resposta["estado"], versao=resposta.get("versao"),
+        seguranca=bool(resposta.get("seguranca")), direito=resposta.get("direito"),
+    )
+    return resposta
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +307,7 @@ _FASES_PERCENTAGEM = {
     "a_descarregar": 20,
     "a_preparar": 30,
     "a_criar_backup": 40,
+    "a_carregar": 50,
     "a_atualizar_imagens": 60,
     "a_arrancar": 75,
     "a_confirmar": 90,
@@ -264,7 +318,11 @@ _CODIGOS_ERRO = {
     "pedido_invalido", "assinatura_invalida", "canal_invalido", "versao_nao_superior", "origem_antiga",
     "descarga_falhou", "hash_invalido", "sem_espaco", "sem_backup", "backup_falhou",
     "pull_falhou", "digest_invalido", "arranque_falhou", "migracao_aplicada", "interno",
+    # Só os do premium, ou a guarda do núcleo que já não o serve.
+    "premium_incompativel", "sem_premium", "nucleo_antigo", "sem_memoria", "pacote_invalido",
+    "load_falhou", "imagem_invalida",
 }
+_COMPONENTES = ("nucleo", "premium")
 # Um estado a meio, sem mexer, há mais de isto, é um agente que morreu: deixa de
 # bloquear novos pedidos.
 _ESTADO_PARADO = timedelta(minutes=45)
@@ -302,11 +360,25 @@ def _ler_pares(caminho: Path) -> dict[str, str] | None:
     return pares
 
 
+def ler_agente() -> dict:
+    """A marca de presença do agente, com a versão premium que ele instalou e se o
+    núcleo a usa. A verdade é do agente; aqui só se mostra e se pergunta por ela."""
+    pares = _ler_pares(_pasta_estado() / "agente.txt") or {}
+    ativo = bool(re.match(r"^\d{1,3}$", pares.get("agente_versao", "")))
+    premium = pares.get("premium_versao", "")
+    return {
+        "ativo": ativo,
+        # O que o agente sabe fazer: um pedido que ele não conhece fica por fazer.
+        "versao": int(pares["agente_versao"]) if ativo else 0,
+        "premium_versao": premium if ativo and _RE_VERSAO_ESTRITA.match(premium) else None,
+        "premium_ativo": ativo and pares.get("premium_ativo") == "1",
+    }
+
+
 def agente_ativo() -> bool:
     """O agente deixou a marca de presença? (Não prova que a unidade corre: a
     prova é o pedido ser recolhido, que o ecrã de progresso mede.)"""
-    pares = _ler_pares(_pasta_estado() / "agente.txt")
-    return bool(pares and re.match(r"^\d{1,3}$", pares.get("agente_versao", "")))
+    return ler_agente()["ativo"]
 
 
 def _ler_estado_agente() -> dict | None:
@@ -357,10 +429,13 @@ def ler_progresso() -> dict:
     base = {
         "estado": "inativo", "fase": None, "percentagem": 0, "versao_alvo": None,
         "versao_origem": None, "codigo": None, "pedido_id": None, "backup": None,
+        "componente": "nucleo",
     }
     if not ultimo:
         return base
     base["pedido_id"] = ultimo["pedido_id"]
+    if ultimo.get("componente") in _COMPONENTES:
+        base["componente"] = ultimo["componente"]
     base["versao_alvo"] = ultimo.get("versao") if isinstance(ultimo.get("versao"), str) else None
     estado = _ler_estado_agente()
     if estado is None or estado["pedido_id"] != ultimo["pedido_id"]:
@@ -406,8 +481,90 @@ def resultado_por_registar() -> dict | None:
     return {"progresso": progresso, "pedido": ultimo}
 
 
-def criar_pedido(*, utilizador_id: uuid.UUID, empresa_id: uuid.UUID, versao: str, sem_backup: bool) -> str:
-    """Deixa o pedido para o agente e devolve o seu identificador."""
+def uuid_ou_none(valor) -> uuid.UUID | None:
+    try:
+        return uuid.UUID(str(valor))
+    except ValueError:
+        return None
+
+
+def registar_desfecho(db, *, empresa_padrao: uuid.UUID | None = None) -> dict | None:
+    """O desfecho do último pedido ao agente, uma única vez: a linha na trilha e,
+    aos administradores da empresa que pediu, a notificação (e o email, se não
+    terminou). Corre no ecrã do progresso e no ciclo de 5 em 5 minutos, para o
+    aviso sair mesmo sem ninguém a olhar. Faz commit."""
+    from sqlmodel import select
+
+    from app.auth.models import RoleUtilizador, Utilizador
+    from app.notificacoes.catalogo import Codigo
+    from app.notificacoes.email import alertar_atualizacao_falhada
+    from app.notificacoes.service import criar_notificacao
+    from app.shared.audit import Acao, ResultadoAcao, registar_acao
+
+    desfecho = resultado_por_registar()
+    if not desfecho:
+        return None
+    progresso, pedido = desfecho["progresso"], desfecho["pedido"]
+    concluida = progresso["estado"] == "concluido"
+    empresa_id = uuid_ou_none(pedido.get("empresa_id")) or empresa_padrao
+    registar_acao(
+        db,
+        acao=Acao.SISTEMA_ATUALIZACAO_CONCLUIDA if concluida else Acao.SISTEMA_ATUALIZACAO_FALHADA,
+        resultado=ResultadoAcao.SUCESSO if concluida else ResultadoAcao.FALHA,
+        empresa_id=empresa_id,
+        utilizador_id=uuid_ou_none(pedido.get("utilizador_id")),
+        dados_novos={
+            "pedido_id": progresso["pedido_id"], "componente": progresso["componente"],
+            "versao_origem": progresso["versao_origem"],
+            "versao_alvo": progresso["versao_alvo"], "estado": progresso["estado"],
+            "codigo": progresso["codigo"], "backup": progresso["backup"],
+        },
+    )
+    if empresa_id:
+        params = {"componente": progresso["componente"], "versao": progresso["versao_alvo"] or ""}
+        if not concluida:
+            params.update(codigo=progresso["codigo"] or "", revertido=progresso["estado"] == "revertido")
+        admins = db.exec(select(Utilizador).where(
+            Utilizador.empresa_id == empresa_id,
+            Utilizador.ativo.is_(True),  # type: ignore[union-attr]
+            Utilizador.role == RoleUtilizador.ADMIN,
+        )).all()
+        for u in admins:
+            criar_notificacao(
+                db, empresa_id=empresa_id, utilizador_id=u.id,
+                codigo=Codigo.ATUALIZACAO_CONCLUIDA if concluida else Codigo.ATUALIZACAO_FALHOU,
+                params=params, dedup_partes=(progresso["componente"],),
+            )
+        if not concluida:
+            alertar_atualizacao_falhada(db, empresa_id=empresa_id, pedido_id=progresso["pedido_id"], params=params)
+    db.commit()
+    return desfecho
+
+
+def _deixar_pedido(campos: dict[str, str], ultimo: dict) -> str:
+    """Escreve o pedido para o agente (e, ao lado, o que este backend pediu) e
+    devolve o seu identificador."""
+    pedido_id = str(uuid.uuid4())
+    corpo = "".join(f"{k}={v}\n" for k, v in {"pedido_id": pedido_id, **campos}.items())
+    pasta = _pasta_pedido()
+    try:
+        (pasta / "ultimo.json").write_text(json.dumps({"pedido_id": pedido_id, **ultimo}), encoding="utf-8")
+        # Escrita atómica: o agente é acordado quando o ficheiro aparece e nunca
+        # pode ler metade dele.
+        tmp = pasta / f".pedido.{pedido_id}.tmp"
+        tmp.write_text(corpo, encoding="utf-8")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, pasta / "pedido.txt")
+    except OSError as exc:
+        logger.error("Não foi possível escrever o pedido de atualização: %s", exc)
+        raise PedidoRecusado("nao_atualizavel") from exc
+    return pedido_id
+
+
+def criar_pedido(*, utilizador_id: uuid.UUID, empresa_id: uuid.UUID, versao: str, sem_backup: bool,
+                 incluir_premium: bool = False) -> str:
+    """Deixa o pedido para o agente e devolve o seu identificador. Com
+    `incluir_premium`, o núcleo novo pede o premium quando arrancar bem."""
     estado = obter_estado()
     if estado["atualizacao_em_curso"]:
         raise PedidoRecusado("em_curso")
@@ -419,35 +576,100 @@ def criar_pedido(*, utilizador_id: uuid.UUID, empresa_id: uuid.UUID, versao: str
     if not estado["backups_ativos"] and not sem_backup:
         raise PedidoRecusado("backups_desativados")
 
-    pedido_id = str(uuid.uuid4())
-    corpo = "\n".join([
-        f"pedido_id={pedido_id}",
-        f"versao={manifesto['versao']}",
-        f"utilizador={utilizador_id}",
-        f"sem_backup={1 if sem_backup else 0}",
-        f"assinatura={manifesto['assinatura']}",
-        "manifesto_b64=" + base64.b64encode(manifesto["texto"].encode("utf-8")).decode("ascii"),
-        "",
-    ])
-    pasta = _pasta_pedido()
+    return _deixar_pedido(
+        {
+            "versao": manifesto["versao"],
+            "utilizador": str(utilizador_id),
+            "sem_backup": "1" if sem_backup else "0",
+            "assinatura": manifesto["assinatura"],
+            "manifesto_b64": base64.b64encode(manifesto["texto"].encode("utf-8")).decode("ascii"),
+        },
+        {
+            "versao": manifesto["versao"], "componente": "nucleo",
+            "utilizador_id": str(utilizador_id), "empresa_id": str(empresa_id), "sem_backup": sem_backup,
+            "premium_a_seguir": bool(incluir_premium and estado["premium_versao"]),
+        },
+    )
+
+
+_RE_TOKEN = re.compile(r"^[A-Za-z0-9_-]{43}$")
+_RE_ASSINATURA = re.compile(r"^[A-Za-z0-9_-]{86}$")
+
+
+def _pedido_premium(resposta: dict, *, utilizador_id: object, empresa_id: object, sem_backup: bool) -> str:
+    """O pedido `atualizar_premium` com o que o sidecar acabou de devolver. Os
+    campos vão para um ficheiro de linhas: só com a forma exata."""
+    versao = resposta.get("versao") or ""
+    if resposta.get("estado") != "disponivel" or not _RE_VERSAO_ESTRITA.match(versao):
+        raise PedidoRecusado("nao_atualizavel")
+    if not (_RE_TOKEN.match(resposta.get("token") or "") and _RE_ASSINATURA.match(resposta.get("assinatura") or "")
+            and resposta.get("ficheiro") == f"premium-onprem-{versao}.tar.gz"
+            and _manifesto_premium_valido(resposta.get("manifesto"), resposta.get("assinatura"), versao)):
+        logger.warning("Atualização premium: a resposta do sidecar não confere; nada pedido ao agente.")
+        raise PedidoRecusado("nao_atualizavel")
+    return _deixar_pedido(
+        {
+            "acao": "atualizar_premium",
+            "versao": versao,
+            "utilizador": str(utilizador_id),
+            "sem_backup": "1" if sem_backup else "0",
+            "assinatura": resposta["assinatura"],
+            "manifesto_b64": base64.b64encode(resposta["manifesto"].encode("utf-8")).decode("ascii"),
+            "ficheiro": resposta["ficheiro"],
+            "token": resposta["token"],
+        },
+        {
+            "versao": versao, "componente": "premium",
+            "utilizador_id": str(utilizador_id), "empresa_id": str(empresa_id), "sem_backup": sem_backup,
+        },
+    )
+
+
+def criar_pedido_premium(*, utilizador_id: uuid.UUID, empresa_id: uuid.UUID, versao: str, sem_backup: bool) -> str:
+    """O premium sozinho (a versão que o ecrã anunciou). Pergunta outra vez ao
+    sidecar: o token de download é curto."""
+    estado = obter_estado()
+    if estado["atualizacao_em_curso"]:
+        raise PedidoRecusado("em_curso")
+    if not estado["premium_atualizavel"]:
+        raise PedidoRecusado("nao_atualizavel")
+    if not estado["backups_ativos"] and not sem_backup:
+        raise PedidoRecusado("backups_desativados")
+    resposta = verificar_premium_sync()
+    if resposta.get("estado") == "disponivel" and resposta.get("versao") != versao:
+        raise PedidoRecusado("versao_diferente")
+    return _pedido_premium(resposta, utilizador_id=utilizador_id, empresa_id=empresa_id, sem_backup=sem_backup)
+
+
+def encadear_premium() -> dict | None:
+    """Depois de o núcleo atualizar bem, o pedido do premium que o administrador
+    incluiu. Uma só tentativa por atualização do núcleo (marca exclusiva, como o
+    desfecho): sem versão nova, ou sem resposta do sidecar, o ecrã volta a mostrar
+    o premium para se atualizar à parte. Devolve o pedido feito, para a trilha."""
+    ultimo = _ultimo_pedido() or {}
+    if ultimo.get("componente", "nucleo") != "nucleo" or ultimo.get("premium_a_seguir") is not True:
+        return None
+    if not re.match(r"^[0-9a-f-]{36}$", ultimo["pedido_id"]) or ler_progresso()["estado"] != "concluido":
+        return None
     try:
-        (pasta / "ultimo.json").write_text(
-            json.dumps({
-                "pedido_id": pedido_id, "versao": manifesto["versao"],
-                "utilizador_id": str(utilizador_id), "empresa_id": str(empresa_id),
-            }),
-            encoding="utf-8",
+        os.close(os.open(_pasta_pedido() / f"encadeado-{ultimo['pedido_id']}", os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+    except OSError:
+        return None
+    resposta = verificar_premium_sync()
+    if resposta.get("estado") != "disponivel":
+        logger.info("Atualização premium a seguir ao núcleo: nada a aplicar (%s).", resposta.get("estado"))
+        return None
+    try:
+        pedido_id = _pedido_premium(
+            resposta, utilizador_id=ultimo.get("utilizador_id"), empresa_id=ultimo.get("empresa_id"),
+            sem_backup=ultimo.get("sem_backup") is True,
         )
-        # Escrita atómica: o agente é acordado quando o ficheiro aparece e nunca
-        # pode ler metade dele.
-        tmp = pasta / f".pedido.{pedido_id}.tmp"
-        tmp.write_text(corpo, encoding="utf-8")
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, pasta / "pedido.txt")
-    except OSError as exc:
-        logger.error("Não foi possível escrever o pedido de atualização: %s", exc)
-        raise PedidoRecusado("nao_atualizavel") from exc
-    return pedido_id
+    except PedidoRecusado:
+        return None
+    return {
+        "pedido_id": pedido_id, "versao": resposta["versao"],
+        "utilizador_id": ultimo.get("utilizador_id"), "empresa_id": ultimo.get("empresa_id"),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -471,6 +693,8 @@ def obter_estado() -> dict:
     disponivel = bool(settings.VERIFY_UPDATES and _ha_versao_mais_recente(atual, ultima))
     manifesto = _estado.get("manifesto") if disponivel else None
     onprem = settings.DEPLOYMENT_MODE == "onprem"
+    agente = ler_agente() if onprem else {"ativo": False, "premium_versao": None, "premium_ativo": False}
+    premium = agente["premium_versao"]
 
     motivo = None
     if disponivel:
@@ -480,8 +704,15 @@ def obter_estado() -> dict:
             motivo = "sem_pacote_assinado"
         elif (_versao_chave(atual) or (0,)) < (_versao_chave(manifesto["min_origem"]) or (0,)):
             motivo = "origem_antiga"
-        elif not agente_ativo():
+        elif premium and manifesto.get("premium_min") \
+                and (_versao_chave(premium) or (0,)) < (_versao_chave(manifesto["premium_min"]) or (0,)):
+            motivo = "premium_incompativel"
+        elif not agente["ativo"]:
             motivo = "agente_inativo"
+    premium_disponivel = bool(
+        onprem and settings.VERIFY_UPDATES and premium and _estado_premium["estado"] == "disponivel"
+        and _ha_versao_mais_recente(premium, _estado_premium["versao"])
+    )
     return {
         "verificar_ativo": settings.VERIFY_UPDATES,
         "versao_atual": atual,
@@ -496,4 +727,11 @@ def obter_estado() -> dict:
         "motivo_nao_atualizavel": motivo,
         "backups_ativos": _backups_ativos() if onprem else False,
         "atualizacao_em_curso": atualizacao_em_curso() if onprem else False,
+        "premium_versao": premium,
+        "premium_ativo": agente["premium_ativo"],
+        "premium_ultima": _estado_premium["versao"] if premium_disponivel else None,
+        "premium_atualizavel": premium_disponivel,
+        "premium_seguranca": premium_disponivel and _estado_premium["seguranca"],
+        # todas | seguranca: com a licença expirada ou revogada, só as de segurança.
+        "premium_direito": _estado_premium["direito"] if premium else None,
     }

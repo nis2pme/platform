@@ -1,7 +1,6 @@
 """
 Router de atualizações (on-prem): verificação, pedido de atualização e progresso.
 """
-import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from slowapi import Limiter
@@ -41,6 +40,27 @@ _limiter = Limiter(key_func=obter_chave_limite)
 )
 def get_update_status(utilizador: Utilizador = Depends(get_current_user)):
     """Versão atual, última conhecida e se há atualização disponível. Requer sessão."""
+    return UpdateStatusSchema(**service.obter_estado())
+
+
+@router.post(
+    "/updates/verificar",
+    response_model=UpdateStatusSchema,
+    summary="Verificar já se há versões novas",
+)
+@_limiter.limit("3/minute")
+def verificar_agora(
+    request: Request,
+    utilizador: Utilizador = Depends(require_capability("sistema", ClasseAcao.OPERAR)),
+):
+    """Pergunta já ao servidor de versões (e ao sidecar, pelos módulos premium), sem
+    esperar pelo ciclo de 24 h. Com a verificação desligada, não pergunta nada."""
+    settings = get_settings()
+    if settings.DEPLOYMENT_MODE != "onprem":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"codigo": "so_onprem"})
+    if not settings.VERIFY_UPDATES:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"codigo": "verificacao_desligada"})
+    service.verificar_updates_sync()
     return UpdateStatusSchema(**service.obter_estado())
 
 
@@ -111,10 +131,17 @@ def aplicar_atualizacao(
         raise _recusar("password_incorreta", status.HTTP_400_BAD_REQUEST)
 
     try:
-        pedido_id = service.criar_pedido(
-            utilizador_id=utilizador.id, empresa_id=utilizador.empresa_id,
-            versao=dados.versao, sem_backup=dados.aceito_sem_backup,
-        )
+        if dados.componente == "premium":
+            pedido_id = service.criar_pedido_premium(
+                utilizador_id=utilizador.id, empresa_id=utilizador.empresa_id,
+                versao=dados.versao, sem_backup=dados.aceito_sem_backup,
+            )
+        else:
+            pedido_id = service.criar_pedido(
+                utilizador_id=utilizador.id, empresa_id=utilizador.empresa_id,
+                versao=dados.versao, sem_backup=dados.aceito_sem_backup,
+                incluir_premium=dados.incluir_premium,
+            )
     except service.PedidoRecusado as recusa:
         raise _recusar(recusa.codigo, status.HTTP_409_CONFLICT)
 
@@ -123,19 +150,13 @@ def aplicar_atualizacao(
         utilizador_id=utilizador.id,
         dados_novos={
             "versao": dados.versao, "pedido_id": pedido_id,
-            "sem_backup": dados.aceito_sem_backup,
+            "sem_backup": dados.aceito_sem_backup, "componente": dados.componente,
+            "incluir_premium": dados.incluir_premium,
         },
         request=request,
     )
     db.commit()
     return UpdateAplicarRespostaSchema(pedido_id=pedido_id, versao=dados.versao)
-
-
-def _uuid_ou_none(valor):
-    try:
-        return uuid.UUID(str(valor))
-    except ValueError:
-        return None
 
 
 @router.get(
@@ -149,22 +170,23 @@ def get_progresso_atualizacao(
     utilizador: Utilizador = Depends(get_current_user),
 ):
     """O que o agente do anfitrião deixou. O desfecho (concluída, falhada,
-    revertida) entra na trilha na primeira leitura em que aparece."""
-    desfecho = service.resultado_por_registar()
-    if desfecho:
-        progresso, pedido = desfecho["progresso"], desfecho["pedido"]
-        concluida = progresso["estado"] == "concluido"
+    revertida) entra na trilha, e chega aos administradores, na primeira leitura
+    em que aparece (ou no ciclo, se ninguém estiver a olhar). Um núcleo
+    atualizado com o premium incluído pede-o aqui (o núcleo novo é quem responde):
+    esta leitura ainda devolve o desfecho do núcleo, com `a_seguir`."""
+    service.registar_desfecho(db, empresa_padrao=utilizador.empresa_id)
+    resposta = service.ler_progresso()
+    encadeado = service.encadear_premium()
+    if encadeado:
         registar_acao(
-            db,
-            acao=Acao.SISTEMA_ATUALIZACAO_CONCLUIDA if concluida else Acao.SISTEMA_ATUALIZACAO_FALHADA,
-            resultado=ResultadoAcao.SUCESSO if concluida else ResultadoAcao.FALHA,
-            empresa_id=_uuid_ou_none(pedido.get("empresa_id")) or utilizador.empresa_id,
-            utilizador_id=_uuid_ou_none(pedido.get("utilizador_id")),
+            db, acao=Acao.SISTEMA_ATUALIZACAO_PEDIDA,
+            empresa_id=service.uuid_ou_none(encadeado["empresa_id"]) or utilizador.empresa_id,
+            utilizador_id=service.uuid_ou_none(encadeado["utilizador_id"]),
             dados_novos={
-                "pedido_id": progresso["pedido_id"], "versao_origem": progresso["versao_origem"],
-                "versao_alvo": progresso["versao_alvo"], "estado": progresso["estado"],
-                "codigo": progresso["codigo"], "backup": progresso["backup"],
+                "versao": encadeado["versao"], "pedido_id": encadeado["pedido_id"],
+                "componente": "premium", "encadeada": True,
             },
         )
         db.commit()
-    return UpdateProgressoSchema(**service.ler_progresso())
+        resposta["a_seguir"] = "premium"
+    return UpdateProgressoSchema(**resposta)

@@ -30,6 +30,9 @@ set -e
 # Sem isto, ou com --canal stable, a instalação segue a versão dos clientes.
 # Chave pública mestra de produção (a que assina as versões dos clientes).
 MESTRA_PUBKEY_PADRAO="zoz286THo5fYFur5w1gfihxSCWupsS33fdnkcCaN0wU"
+# CA privada do fornecedor (o certificado, público; base64 do PEM): o agente confia
+# só nela para falar com o serviço de licenças nos pedidos premium.
+CA_FORNECEDOR_PADRAO="LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tDQpNSUlDQXpDQ0FZbWdBd0lCQWdJVUtvR29rbE9HSnVLUzhFNkR3b3h1UzZvbzRKRXdDZ1lJS29aSXpqMEVBd013DQpMekVRTUE0R0ExVUVDZ3dIVGtsVE1sQk5SVEViTUJrR0ExVUVBd3dTVGtsVE1sQk5SU0JEUVNCd2NtbDJZV1JoDQpNQjRYRFRJMk1Ea3hPREl4TWprMU5sb1hEVE0yTURreE5USXhNamsxTmxvd0x6RVFNQTRHQTFVRUNnd0hUa2xUDQpNbEJOUlRFYk1Ca0dBMVVFQXd3U1RrbFRNbEJOUlNCRFFTQndjbWwyWVdSaE1IWXdFQVlIS29aSXpqMENBUVlGDQpLNEVFQUNJRFlnQUVPelJZN3U1citVZHNBa3FsUE5NbEFDV0JMdzNudk9vMWVpRjZVcEdlc3crSkI0SGlLUENKDQpuWDlWTjNPYzZ6VjRpQzd0MFBYQ3dXV1NzNHVWbU1SdGM0YlVKQ2ROZVJKQlNoMjcySmRTaGNldVAzSjFxeE94DQpPbFFyOHpHV0lSM1VvMll3WkRBZEJnTlZIUTRFRmdRVUd4ZmgwRHZSYzdXNjhYK3hNSnZXbFBJMlpzb3dId1lEDQpWUjBqQkJnd0ZvQVVHeGZoMER2UmM3VzY4WCt4TUp2V2xQSTJac293RWdZRFZSMFRBUUgvQkFnd0JnRUIvd0lCDQpBREFPQmdOVkhROEJBZjhFQkFNQ0FRWXdDZ1lJS29aSXpqMEVBd01EYUFBd1pRSXhBUHlmbFVuTDNqcXc3dnNKDQpTUk5IY3NrVlpOSzRFWWJlMG1zb3RVOXA0K0MrR0c5ejVKdkZ4YnJ3ZWkwZXhLM25ad0l3TFZ6ZGQ3bEFHREwwDQorejFuL2V0eUlUOUcyRll3REZMc1kxZW9qRkk5eXpvdVBoL0t6N3M3eXhmMHhZVFFhTlBuDQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tDQo="
 AGENTE_PEDIDO=""
 CANAL_SEL="${NIS2PME_CANAL:-}"
 _anterior=""
@@ -752,9 +755,22 @@ _agente_instalar() {
         [ "$CANAL_SEL" != "dev" ] || echo "CANAL=dev"
         echo "COMPOSE_FILES=$_cf"
         [ -z "${NIS2PME_AGENTE_BASE_URL:-}" ] || echo "BASE_URL=$NIS2PME_AGENTE_BASE_URL"
+        [ -z "${NIS2PME_LICENCAS_URL:-}" ] || echo "LICENCAS_URL=$NIS2PME_LICENCAS_URL"
     } > "$AGENTE_CONF.novo"
     chown root:root "$AGENTE_CONF.novo"; chmod 644 "$AGENTE_CONF.novo"
     mv -f "$AGENTE_CONF.novo" "$AGENTE_CONF"
+
+    # A CA do fornecedor para o agente (pedidos premium pelo interface): a deste script
+    # ou, num stack de desenvolvimento, a de quem o corre. Nunca a do .env.
+    _ca_b64="${NIS2PME_TLS_CA_PEM:-$CA_FORNECEDOR_PADRAO}"
+    if printf '%s' "$_ca_b64" | base64 -d 2>/dev/null | grep -q -- '-----BEGIN CERTIFICATE-----'; then
+        printf '%s' "$_ca_b64" | base64 -d > /etc/nis2pme/fornecedor-ca.pem.novo \
+            && chown root:root /etc/nis2pme/fornecedor-ca.pem.novo \
+            && chmod 644 /etc/nis2pme/fornecedor-ca.pem.novo \
+            && mv -f /etc/nis2pme/fornecedor-ca.pem.novo /etc/nis2pme/fornecedor-ca.pem
+    else
+        echo "[nis2pme] $(t "AVISO: CA do fornecedor inválida — o pedido de módulos premium pelo interface não vai funcionar." "WARNING: invalid vendor CA — requesting premium modules from the interface will not work.")"
+    fi
 
     # O que o agente vai executar como root não pode ser reescrito por quem não é root.
     chmod go-w "$INSTALL_DIR" 2>/dev/null || true

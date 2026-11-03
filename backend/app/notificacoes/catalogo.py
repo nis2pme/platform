@@ -91,9 +91,19 @@ class Codigo:
     CONETOR_CONTRADICAO = "conetor.contradicao"
     BACKUP_SEM_PASSPHRASE = "sistema.backup_sem_passphrase"
     BACKUP_INTERROMPIDO = "sistema.backup_interrompido"
+    BACKUP_INCOMPLETO = "sistema.backup_incompleto"
+    BACKUP_PREMIUM_PENDENTE = "sistema.backup_premium_pendente"
     TRIAL_A_TERMINAR = "sistema.trial_a_terminar"
     LICENCA_A_EXPIRAR = "sistema.licenca_a_expirar"
     LICENCA_EM_TOLERANCIA = "sistema.licenca_em_tolerancia"
+    PREMIUM_APROVADO = "sistema.premium_aprovado"
+    PREMIUM_INSTALADO = "sistema.premium_instalado"
+    PREMIUM_PRONTO = "sistema.premium_pronto"
+    PREMIUM_RECUSADO = "sistema.premium_recusado"
+    PREMIUM_FALHOU = "sistema.premium_falhou"
+    PREMIUM_ATIVADO = "sistema.premium_ativado"
+    ATUALIZACAO_FALHOU = "sistema.atualizacao_falhou"
+    ATUALIZACAO_CONCLUIDA = "sistema.atualizacao_concluida"
 
 
 _C = Categoria
@@ -183,6 +193,18 @@ _DEFINICOES: tuple[DefinicaoNotificacao, ...] = (
     DefinicaoNotificacao(
         Codigo.BACKUP_INTERROMPIDO, _C.SISTEMA, _S.CRITICO, acionavel=True,
     ),
+    # params: {}
+    # Com os módulos premium ativos, o sidecar não entregou os dados deles e o
+    # backup saiu só com o núcleo. Sai com o primeiro backup completo.
+    DefinicaoNotificacao(
+        Codigo.BACKUP_INCOMPLETO, _C.SISTEMA, _S.CRITICO, acionavel=True,
+    ),
+    # params: {}
+    # Um restauro numa instalação ainda sem os módulos premium deixou os dados
+    # premium no backup. Sai quando são repostos ou descartados.
+    DefinicaoNotificacao(
+        Codigo.BACKUP_PREMIUM_PENDENTE, _C.SISTEMA, _S.AVISO, acionavel=True,
+    ),
     # Fim do acesso: uma por marco (dias antes do fim), a do marco seguinte
     # dá a anterior por lida. params: {"data": "AAAA-MM-DD", "dias": int}
     DefinicaoNotificacao(Codigo.TRIAL_A_TERMINAR, _C.SISTEMA, _S.AVISO),
@@ -190,6 +212,36 @@ _DEFINICOES: tuple[DefinicaoNotificacao, ...] = (
     # A licença passou o fim e corre a tolerância; no fim dela os módulos
     # premium ficam só de leitura. params: {"data": ..., "ate": "AAAA-MM-DD"}
     DefinicaoNotificacao(Codigo.LICENCA_EM_TOLERANCIA, _C.SISTEMA, _S.CRITICO),
+    # --- Pedido dos módulos premium pelo interface (só os administradores) ---
+    # params: {}  — aprovado pelo fornecedor; a instalação começa sozinha.
+    DefinicaoNotificacao(Codigo.PREMIUM_APROVADO, _C.SISTEMA, _S.INFO),
+    # params: {}  — o sidecar está instalado; falta a licença do fornecedor.
+    DefinicaoNotificacao(Codigo.PREMIUM_INSTALADO, _C.SISTEMA, _S.INFO),
+    # params: {}  — a licença chegou e vale: falta o administrador ativar. Sai
+    # quando o premium fica ativo.
+    DefinicaoNotificacao(Codigo.PREMIUM_PRONTO, _C.SISTEMA, _S.AVISO, acionavel=True),
+    # params: {"tipo": "rejeitado|expirado|cancelado|sem_resposta|desconhecido",
+    #          "motivo": str}  — o motivo é do fornecedor, não de uma pessoa da empresa.
+    DefinicaoNotificacao(Codigo.PREMIUM_RECUSADO, _C.SISTEMA, _S.AVISO, dedup=False),
+    # params: {"etapa": "instalar|ativar", "codigo": str, "revertido": bool}
+    DefinicaoNotificacao(
+        Codigo.PREMIUM_FALHOU, _C.SISTEMA, _S.CRITICO, acionavel=True, dedup=False,
+    ),
+    # params: {}
+    DefinicaoNotificacao(
+        Codigo.PREMIUM_ATIVADO, _C.SISTEMA, _S.INFO,
+        substitui=(Codigo.PREMIUM_PRONTO,),
+    ),
+    # --- Atualizações pelo interface (aos administradores da empresa que pediu) ---
+    # params: {"componente": "nucleo|premium", "versao": "X.Y.Z", "codigo": str,
+    #          "revertido": bool}  — a chave é o componente: uma atualização
+    # concluída do mesmo componente dá-a por resolvida.
+    DefinicaoNotificacao(Codigo.ATUALIZACAO_FALHOU, _C.SISTEMA, _S.CRITICO, acionavel=True),
+    # params: {"componente": "nucleo|premium", "versao": "X.Y.Z"}
+    DefinicaoNotificacao(
+        Codigo.ATUALIZACAO_CONCLUIDA, _C.SISTEMA, _S.INFO,
+        substitui=(Codigo.ATUALIZACAO_FALHOU,),
+    ),
 )
 
 CATALOGO: dict[str, DefinicaoNotificacao] = {d.codigo: d for d in _DEFINICOES}

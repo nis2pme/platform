@@ -47,10 +47,12 @@ from pathlib import Path
 from app.backup.service import (
     _DATA_DIR,
     _FORMATO,
+    _PREMIUM_PENDENTE_FILE,
     _UPLOADS_DIR,
     BACKUPS_DIR,
     criar_backup,
     passphrase_definida,
+    premium_pendente,
     separar_credencial,
 )
 from app.shared import manutencao
@@ -239,10 +241,16 @@ def _versao_mais_recente_que_app(versao_backup: str | None) -> bool:
         return False
 
 
+def _premium_ativo() -> bool:
+    from app.config import get_settings
+    settings = get_settings()
+    return bool(settings.PREMIUM_ENABLED and settings.PREMIUM_SIDECAR_ADDR)
+
+
 def _sidecar_disponivel() -> bool:
     from app.config import get_settings
     settings = get_settings()
-    if not settings.PREMIUM_ENABLED or not settings.PREMIUM_SIDECAR_ADDR:
+    if not _premium_ativo():
         return False
     try:
         import grpc
@@ -289,7 +297,10 @@ def _validar_manifest(manifest: dict, workdir: Path, sem_premium: bool) -> None:
             codigo="revisao_desconhecida",
         )
 
-    if componentes.get("premium") and not sem_premium and not _sidecar_disponivel():
+    # Sem módulos premium nesta instalação (máquina nova), os dados premium ficam
+    # no backup para se reporem depois de os ativar. Com eles ativos e o sidecar
+    # em baixo, recusa-se: é uma falha passageira, não uma escolha.
+    if componentes.get("premium") and not sem_premium and _premium_ativo() and not _sidecar_disponivel():
         raise RestauroErro(
             "O backup contém dados premium mas o sidecar não está acessível. "
             "Arranque o container premium, ou repita com --sem-premium para "
@@ -401,7 +412,8 @@ _ENV_DB_LOCAIS = ("DB_PASSWORD", "DB_USER", "DB_NAME", "DB_HOST", "DB_PORT")
 # A CONNECTOR_SECRETS_KEY não está aqui: no on-prem continua no .env e vai no backup.
 _ENV_EM_FICHEIRO = frozenset({
     "PREMIUM_DB_PASSWORD", "PREMIUM_DATA_DB_PASSWORD", "PREMIUM_DATA_SIDECAR_DB_PASSWORD",
-    "LICENSE_DB_PASSWORD", "ENTITLEMENTS_GATEWAY_DB_PASSWORD", "ENTITLEMENTS_SIDECAR_DB_PASSWORD",
+    "LICENSE_DB_PASSWORD", "LICENSE_DB_ADMIN_PASSWORD", "ENTITLEMENTS_GATEWAY_DB_PASSWORD",
+    "ENTITLEMENTS_SIDECAR_DB_PASSWORD",
     "ENTITLEMENTS_SUPERADMIN_DB_PASSWORD", "GW_DB_PASSWORD", "VALKEY_PASSWORD",
     "GATEWAY_AUTH_TOKEN", "GATEWAY_PURGE_TOKEN", "GATEWAY_PROVISION_TOKEN",
     "GATEWAY_PROVISION_TOKEN_TRIAL", "LICENSE_ADMIN_TOKEN", "SAAS_TRIAL_INTERNAL_TOKEN",
@@ -490,6 +502,68 @@ def _restaurar_premium(dump: Path) -> str:
         return "falhou"
 
 
+def _guardar_premium_pendente(caminho: Path, manifest: dict) -> str:
+    """Aponta para o backup que tem os dados premium (fica cifrado, como está). Um
+    ficheiro de fora da pasta dos backups é copiado para lá, onde a retenção o
+    respeita. Devolve o nome do backup."""
+    if caminho.parent.resolve() != BACKUPS_DIR.resolve():
+        destino = BACKUPS_DIR / f"nis2pme-backup-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}-premium.nbk"
+        shutil.copy2(caminho, destino)
+        caminho = destino
+    _PREMIUM_PENDENTE_FILE.write_text(json.dumps({
+        "ficheiro": caminho.name,
+        "sha256": manifest.get("checksums", {}).get("premium.dump"),
+        "criado_em": manifest.get("criado_em"),
+        "app_version": manifest.get("app_version"),
+    }))
+    return caminho.name
+
+
+def repor_premium_pendente(passphrase: str) -> dict:
+    """Repõe os dados premium que um restauro deixou por repor, já com os módulos
+    premium ativos. Antes faz um backup de segurança (o sidecar substitui a base
+    dele inteira). Devolve o backup reposto e o de segurança."""
+    pendente = premium_pendente()
+    if pendente is None:
+        raise RestauroErro("Não há dados premium por repor.", codigo="sem_premium_pendente")
+    if not _sidecar_disponivel():
+        raise RestauroErro("Os módulos premium não estão ativos ou não respondem.",
+                           codigo="premium_indisponivel")
+    if not passphrase_definida():
+        raise RestauroErro("Defina primeiro a frase-secreta dos backups (para o backup de segurança).",
+                           codigo="passphrase_nao_definida")
+    workdir = Path(tempfile.mkdtemp(dir=BACKUPS_DIR, prefix=".restauro-"))
+    try:
+        _abrir_para(BACKUPS_DIR / pendente["ficheiro"], passphrase, workdir)
+        manifest = json.loads((workdir / "manifest.json").read_text())
+        dump = workdir / "premium.dump"
+        esperado = pendente.get("sha256")
+        if (not esperado or not dump.is_file() or _sha256(dump) != esperado
+                or manifest.get("checksums", {}).get("premium.dump") != esperado):
+            raise RestauroErro("O backup não tem os dados premium esperados.", codigo="corrompido")
+        from sqlmodel import Session
+
+        from app.database import engine
+        with Session(engine) as db:
+            seguranca = criar_backup(db, "completo")
+        if _restaurar_premium(dump) != "ok":
+            raise RestauroErro("O serviço premium não aceitou os dados do backup.",
+                               codigo="premium_falhou")
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+    _PREMIUM_PENDENTE_FILE.unlink(missing_ok=True)
+    return {"ficheiro": pendente["ficheiro"], "backup_seguranca": seguranca["ficheiro"]}
+
+
+def descartar_premium_pendente() -> str:
+    """Desiste dos dados premium por repor. O backup fica como os outros."""
+    pendente = premium_pendente()
+    if pendente is None:
+        raise RestauroErro("Não há dados premium por repor.", codigo="sem_premium_pendente")
+    _PREMIUM_PENDENTE_FILE.unlink(missing_ok=True)
+    return pendente["ficheiro"]
+
+
 # ---------------------------------------------------------------------------
 # Fluxo partilhado (CLI F4 e UI F5 usam EXATAMENTE os mesmos passos)
 # ---------------------------------------------------------------------------
@@ -555,6 +629,11 @@ def _aplicar_restauro(
         if sem_premium:
             estado_premium = "ignorado"
             informar("Componente premium ignorado (a pedido).")
+        elif not _premium_ativo():
+            estado_premium = "pendente"
+            nome = _guardar_premium_pendente(caminho, manifest)
+            informar(f"Sem módulos premium nesta instalação: os dados premium ficam em {nome} "
+                     "para se reporem depois de os ativar.")
         else:
             informar("A restaurar o componente premium (via sidecar)…")
             estado_premium = _restaurar_premium(workdir / "premium.dump")
@@ -830,6 +909,11 @@ def finalizar_restauro_no_arranque() -> None:
             registar_acao(db, acao=Acao.RESTAURO_EXECUTADO, empresa_id=empresa_id,
                           dados_novos=na_trilha)
         db.commit()
+        if pendente.get("premium") == "pendente":
+            from app.backup.service import _avisar_administradores
+            from app.notificacoes.catalogo import Codigo
+
+            _avisar_administradores(db, Codigo.BACKUP_PREMIUM_PENDENTE)
     apagamentos.remover_ficheiros(reaplicacao["ficheiros"])
 
     _RELATORIO_FILE.write_text(json.dumps(resumo, indent=1))

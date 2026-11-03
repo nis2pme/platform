@@ -64,6 +64,11 @@ class PremiumProviderStub:
                 request_serializer=premium__pb2.TestemunharTrilhaReq.SerializeToString,
                 response_deserializer=premium__pb2.TestemunharTrilhaResp.FromString,
                 _registered_method=True)
+        self.VerificarAtualizacaoPremium = channel.unary_unary(
+                '/premium.v1.PremiumProvider/VerificarAtualizacaoPremium',
+                request_serializer=premium__pb2.AtualizacaoPremiumReq.SerializeToString,
+                response_deserializer=premium__pb2.AtualizacaoPremiumResp.FromString,
+                _registered_method=True)
 
 
 class PremiumProviderServicer:
@@ -119,6 +124,16 @@ class PremiumProviderServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def VerificarAtualizacaoPremium(self, request, context):
+        """Atualização dos módulos premium (on-prem): o sidecar pergunta ao fornecedor,
+        assinando com a chave da instalação, pela versão seguinte a que a licença dá
+        direito, e devolve o manifesto assinado pela raiz e um token de download. O
+        agente do anfitrião confere a assinatura antes de aplicar.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_PremiumProviderServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -151,6 +166,11 @@ def add_PremiumProviderServicer_to_server(servicer, server):
                     servicer.TestemunharTrilha,
                     request_deserializer=premium__pb2.TestemunharTrilhaReq.FromString,
                     response_serializer=premium__pb2.TestemunharTrilhaResp.SerializeToString,
+            ),
+            'VerificarAtualizacaoPremium': grpc.unary_unary_rpc_method_handler(
+                    servicer.VerificarAtualizacaoPremium,
+                    request_deserializer=premium__pb2.AtualizacaoPremiumReq.FromString,
+                    response_serializer=premium__pb2.AtualizacaoPremiumResp.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -315,6 +335,33 @@ class PremiumProvider:
             '/premium.v1.PremiumProvider/TestemunharTrilha',
             premium__pb2.TestemunharTrilhaReq.SerializeToString,
             premium__pb2.TestemunharTrilhaResp.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def VerificarAtualizacaoPremium(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/premium.v1.PremiumProvider/VerificarAtualizacaoPremium',
+            premium__pb2.AtualizacaoPremiumReq.SerializeToString,
+            premium__pb2.AtualizacaoPremiumResp.FromString,
             options,
             channel_credentials,
             insecure,

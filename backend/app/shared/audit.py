@@ -294,6 +294,10 @@ class Acao:
     BACKUP_AGENDADO_ALTERADO = "backup.agendado_alterado"
     BACKUP_IMPORTADO = "backup.importado"
     RESTAURO_EXECUTADO = "backup.restauro_executado"
+    # Dados premium de um backup restaurado antes de haver módulos premium: ficam
+    # no .nbk até o administrador os repor (ou desistir deles).
+    BACKUP_PREMIUM_REPOSTO = "backup.premium_reposto"
+    BACKUP_PREMIUM_DESCARTADO = "backup.premium_descartado"
 
     # Servidor de saída de correio (on-prem). Quem o muda passa a decidir por
     # onde saem as recuperações de password e os avisos de prazo legal — e a
@@ -313,6 +317,18 @@ class Acao:
     # Ficheiro de licença premium instalado pela UI (on-prem). Muda o que a
     # instalação pode fazer; fica com o identificador, o plano e o termo.
     LICENCA_INSTALADA = "sistema.licenca_instalada"
+    # Pedido dos módulos premium pelo interface (on-prem): o pedido, a desistência,
+    # o fecho pelo fornecedor (rejeitado, expirado), a instalação que o agente faz
+    # depois da aprovação e a ativação pedida pelo administrador, com os desfechos.
+    SISTEMA_PREMIUM_PEDIDO = "sistema.premium_pedido"
+    SISTEMA_PREMIUM_PEDIDO_CANCELADO = "sistema.premium_pedido_cancelado"
+    SISTEMA_PREMIUM_PEDIDO_FECHADO = "sistema.premium_pedido_fechado"
+    SISTEMA_PREMIUM_INSTALACAO = "sistema.premium_instalacao"
+    SISTEMA_PREMIUM_INSTALADO = "sistema.premium_instalado"
+    SISTEMA_PREMIUM_INSTALACAO_FALHADA = "sistema.premium_instalacao_falhada"
+    SISTEMA_PREMIUM_ATIVACAO_PEDIDA = "sistema.premium_ativacao_pedida"
+    SISTEMA_PREMIUM_ATIVADO = "sistema.premium_ativado"
+    SISTEMA_PREMIUM_ATIVACAO_FALHADA = "sistema.premium_ativacao_falhada"
 
     # Política de permissões — quem pode o quê. Uma alteração aqui muda a
     # postura de segurança da instalação e entra no registo de funções e

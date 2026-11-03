@@ -63,8 +63,13 @@ _INTERROMPIDO_FILE = _DATA_DIR / "backup-interrompido.json"
 # avisar os administradores e saltar o agendado desse dia.
 _ESTADO_DE_EXECUCAO = frozenset({
     "backup-em-curso.json", "backup-interrompido.json",
-    "manutencao.flag", "restauro-pendente.json",
+    "manutencao.flag", "restauro-pendente.json", "premium-pendente.json",
 })
+
+# Um backup restaurado numa instalação ainda sem os módulos premium deixa os dados
+# premium no próprio .nbk (cifrado) até o administrador os repor: este ficheiro
+# aponta para ele, e a retenção não o apaga entretanto.
+_PREMIUM_PENDENTE_FILE = _DATA_DIR / "premium-pendente.json"
 
 _MODOS = ("completo", "so_db")
 
@@ -215,8 +220,9 @@ def _aplicar_retencao(db: Session) -> int:
     espaço para a cópia nova já foi confirmado antes de gerar. A mais recente
     nunca é apagada."""
     retencao = max(1, retencao_em_vigor(db))
+    pendente = (premium_pendente() or {}).get("ficheiro")
     ficheiros = sorted(
-        BACKUPS_DIR.glob("nis2pme-backup-*.nbk"),
+        (f for f in BACKUPS_DIR.glob("nis2pme-backup-*.nbk") if f.name != pendente),
         key=lambda f: f.stat().st_mtime,
     )
     apagados = 0
@@ -226,6 +232,17 @@ def _aplicar_retencao(db: Session) -> int:
         apagados += 1
         logger.info("Retenção de backups: apagado %s.", antigo.name)
     return apagados
+
+
+def premium_pendente() -> dict | None:
+    """Os dados premium por repor (o backup que os tem), ou None."""
+    try:
+        dados = json.loads(_PREMIUM_PENDENTE_FILE.read_text())
+        nome = dados["ficheiro"]
+        caminho_backup(nome)
+    except (OSError, ValueError, KeyError, TypeError, HTTPException):
+        return None
+    return {k: dados.get(k) for k in ("ficheiro", "sha256", "criado_em", "app_version")}
 
 
 def listar_backups() -> list[dict]:
@@ -240,6 +257,7 @@ def listar_backups() -> list[dict]:
             "tamanho_mb": round(st.st_size / 1_048_576, 1),
             "criado_em": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat(),
             "modo": cab.get("modo", "?"),
+            "incompleto": cab.get("premium_em_falta") is True,
         })
     return out
 
@@ -404,15 +422,24 @@ def _pg_dump(destino: Path) -> None:
         )
 
 
+def _premium_esperado() -> bool:
+    """Com os módulos premium ativos, um backup sem os dados deles está incompleto."""
+    from app.config import get_settings
+    settings = get_settings()
+    return bool(settings.PREMIUM_ENABLED and settings.PREMIUM_SIDECAR_ADDR)
+
+
 def _premium_dump(destino: Path) -> bool:
     """
     Pede ao sidecar o dump da premium-data-db (BackupService.ExportarDados) e
     grava-o em `destino`. Best-effort, como a purga: sem sidecar (ou com erro),
-    o backup segue SEM o componente premium — o manifest reflete a ausência.
+    o backup segue SEM o componente premium — o manifest reflete a ausência, e
+    com o premium ativo o backup fica marcado incompleto e os administradores
+    são avisados.
     """
     from app.config import get_settings
     settings = get_settings()
-    if not settings.PREMIUM_ENABLED or not settings.PREMIUM_SIDECAR_ADDR:
+    if not _premium_esperado():
         return False
     try:
         import grpc
@@ -453,7 +480,33 @@ def criar_backup(db: Session, modo: str) -> dict:
         _EM_CURSO_FILE.unlink(missing_ok=True)
     _aplicar_retencao(db)
     _resolver_interrupcao(db)
+    _avisar_premium_em_falta(db, incompleto=resultado["incompleto"])
     return resultado
+
+
+def _avisar_premium_em_falta(db: Session, *, incompleto: bool) -> None:
+    """Com os módulos premium ativos, um backup sem os dados deles avisa os
+    administradores (notificação e email); o primeiro backup completo a seguir
+    dá o aviso por resolvido. Um aviso que falha não desfaz o backup."""
+    from app.empresas.models import Empresa
+    from app.notificacoes.catalogo import Codigo
+    from app.notificacoes.email import alertar_backup_incompleto
+    from app.notificacoes.service import marcar_lidas_por_chave_prefixo
+
+    _registar_modelos()
+    try:
+        if incompleto:
+            logger.error("Backup sem os dados dos módulos premium: o sidecar não os entregou.")
+            _avisar_administradores(db, Codigo.BACKUP_INCOMPLETO)
+            for empresa_id in db.exec(select(Empresa.id)).all():
+                alertar_backup_incompleto(db, empresa_id=empresa_id)
+        else:
+            for empresa_id in db.exec(select(Empresa.id)).all():
+                marcar_lidas_por_chave_prefixo(db, prefixo=Codigo.BACKUP_INCOMPLETO, empresa_id=empresa_id)
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        logger.exception("Não foi possível registar o aviso do backup incompleto.")
 
 
 def _resolver_interrupcao(db: Session) -> None:
@@ -488,6 +541,7 @@ def _gerar_backup(db: Session, modo: str, recipiente: str, embrulho: dict) -> di
         # dump da base dele e envia-o por gRPC — o core nunca toca na premium-db.
         premium_dump = tmp_dir / "premium.dump"
         tem_premium = _premium_dump(premium_dump)
+        premium_em_falta = not tem_premium and _premium_esperado()
 
         manifest = {
             "formato": _FORMATO,
@@ -530,14 +584,18 @@ def _gerar_backup(db: Session, modo: str, recipiente: str, embrulho: dict) -> di
         # Cifra autenticada por partes (age): memória constante qualquer que seja
         # o tamanho, e um bloco adulterado é recusado na leitura. O cabeçalho é
         # informativo — o que manda no restauro é o manifest, dentro do payload.
-        cabecalho = json.dumps({
+        cabecalho = {
             "formato": _FORMATO,
             "modo": modo,
             "app_version": get_settings().APP_VERSION,
             "criado_em": agora.isoformat(),
             "recipiente": recipiente,
             "chave": embrulho,
-        }).encode("utf-8")
+        }
+        if premium_em_falta:
+            # Só para a lista (que não decifra): o restauro lê o manifest.
+            cabecalho["premium_em_falta"] = True
+        cabecalho = json.dumps(cabecalho).encode("utf-8")
 
         nome = f"nis2pme-backup-{agora.strftime('%Y%m%d-%H%M%S')}.nbk"
         final_tmp = tmp_dir / nome
@@ -555,6 +613,7 @@ def _gerar_backup(db: Session, modo: str, recipiente: str, embrulho: dict) -> di
         "tamanho_mb": round(st.st_size / 1_048_576, 1),
         "criado_em": agora.isoformat(),
         "modo": modo,
+        "incompleto": premium_em_falta,
     }
 
 

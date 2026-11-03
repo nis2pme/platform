@@ -1,5 +1,5 @@
 """Schemas do módulo de verificação de atualizações."""
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -21,6 +21,14 @@ class UpdateStatusSchema(BaseModel):
     motivo_nao_atualizavel: Optional[str] = None
     backups_ativos: bool = False
     atualizacao_em_curso: bool = False
+    # Componente premium (on-prem, instalado pelo agente).
+    premium_versao: Optional[str] = None
+    premium_ativo: bool = False
+    premium_ultima: Optional[str] = None
+    premium_atualizavel: bool = False
+    premium_seguranca: bool = False
+    # todas | seguranca (licença expirada ou revogada: só as de segurança).
+    premium_direito: Optional[str] = None
 
 
 class UpdateConfigSchema(BaseModel):
@@ -41,6 +49,10 @@ class UpdateAplicarSchema(BaseModel):
     versao: str = Field(max_length=16, pattern=r"^\d{1,4}\.\d{1,4}\.\d{1,4}$")
     password: str = Field(max_length=256)
     aceito_sem_backup: bool = False
+    # `premium`: só os módulos premium (a `versao` é a deles).
+    componente: Literal["nucleo", "premium"] = "nucleo"
+    # Com o núcleo: atualizar a seguir os módulos premium, se houver versão nova.
+    incluir_premium: bool = False
 
 
 class UpdateAplicarRespostaSchema(BaseModel):
@@ -61,3 +73,6 @@ class UpdateProgressoSchema(BaseModel):
     codigo: Optional[str] = None
     pedido_id: Optional[str] = None
     backup: Optional[str] = None
+    componente: str = "nucleo"
+    # O que se pediu a seguir a esta atualização (`premium`), se alguma coisa.
+    a_seguir: Optional[str] = None

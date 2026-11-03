@@ -34,6 +34,11 @@ service PremiumProvider {
   // atuais das cadeias — seguem no heartbeat seguinte, assinadas pela instalação —
   // e recebe as que o fornecedor testemunhou no último heartbeat aceite.
   rpc TestemunharTrilha (TestemunharTrilhaReq) returns (TestemunharTrilhaResp);
+  // Atualização dos módulos premium (on-prem): o sidecar pergunta ao fornecedor,
+  // assinando com a chave da instalação, pela versão seguinte a que a licença dá
+  // direito, e devolve o manifesto assinado pela raiz e um token de download. O
+  // agente do anfitrião confere a assinatura antes de aplicar.
+  rpc VerificarAtualizacaoPremium (AtualizacaoPremiumReq) returns (AtualizacaoPremiumResp);
 }
 
 message CabecaTrilha {
@@ -138,6 +143,32 @@ message InstalarLicencaResp {
   string license_id = 10;
   // false quando `so_validar`.
   bool instalada = 11;
+}
+
+message AtualizacaoPremiumReq {
+  // Versões instaladas, `x.y.z` (o núcleo sabe a do premium pelo agente).
+  string versao_premium = 1;
+  string versao_nucleo = 2;
+}
+
+message AtualizacaoPremiumResp {
+  // disponivel | atualizado | sem_licenca | sem_servico | resposta_invalida |
+  // nao_aplicavel (SaaS: as atualizações são do fornecedor).
+  string estado = 1;
+  // Os campos seguintes só com `disponivel` (o `direito` também com `atualizado`).
+  string versao = 2;
+  // Atualização de segurança: chega mesmo com a licença expirada ou revogada.
+  bool seguranca = 3;
+  // todas | seguranca — o que a licença desta instalação permite receber.
+  string direito = 4;
+  // O manifesto premium tal como a raiz o assinou, e a assinatura (base64url).
+  string manifesto = 5;
+  string assinatura = 6;
+  // premium-onprem-x.y.z.tar.gz, e o token que a borda do fornecedor aceita para ele.
+  string ficheiro = 7;
+  string token = 8;
+  // Fim da validade do token (RFC3339).
+  string expira_em = 9;
 }
 
 message EntitlementQuery {

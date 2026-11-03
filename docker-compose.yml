@@ -80,6 +80,11 @@ services:
       # só passa a pedir a confirmação do fingerprint em cada convite atestado,
       # e ninguém repara. Um stack de desenvolvimento define a sua no .env.
       NIS2PME_MESTRA_PUBKEY: ${NIS2PME_MESTRA_PUBKEY:-zoz286THo5fYFur5w1gfihxSCWupsS33fdnkcCaN0wU}
+      # CA privada do fornecedor (certificado PÚBLICO, base64 do PEM) e o serviço de
+      # licenças: o pedido dos módulos premium pelo interface fala com ele antes de
+      # haver premium instalado. Um stack de desenvolvimento define os seus no .env.
+      NIS2PME_TLS_CA_PEM: ${NIS2PME_TLS_CA_PEM:-LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tDQpNSUlDQXpDQ0FZbWdBd0lCQWdJVUtvR29rbE9HSnVLUzhFNkR3b3h1UzZvbzRKRXdDZ1lJS29aSXpqMEVBd013DQpMekVRTUE0R0ExVUVDZ3dIVGtsVE1sQk5SVEViTUJrR0ExVUVBd3dTVGtsVE1sQk5SU0JEUVNCd2NtbDJZV1JoDQpNQjRYRFRJMk1Ea3hPREl4TWprMU5sb1hEVE0yTURreE5USXhNamsxTmxvd0x6RVFNQTRHQTFVRUNnd0hUa2xUDQpNbEJOUlRFYk1Ca0dBMVVFQXd3U1RrbFRNbEJOUlNCRFFTQndjbWwyWVdSaE1IWXdFQVlIS29aSXpqMENBUVlGDQpLNEVFQUNJRFlnQUVPelJZN3U1citVZHNBa3FsUE5NbEFDV0JMdzNudk9vMWVpRjZVcEdlc3crSkI0SGlLUENKDQpuWDlWTjNPYzZ6VjRpQzd0MFBYQ3dXV1NzNHVWbU1SdGM0YlVKQ2ROZVJKQlNoMjcySmRTaGNldVAzSjFxeE94DQpPbFFyOHpHV0lSM1VvMll3WkRBZEJnTlZIUTRFRmdRVUd4ZmgwRHZSYzdXNjhYK3hNSnZXbFBJMlpzb3dId1lEDQpWUjBqQkJnd0ZvQVVHeGZoMER2UmM3VzY4WCt4TUp2V2xQSTJac293RWdZRFZSMFRBUUgvQkFnd0JnRUIvd0lCDQpBREFPQmdOVkhROEJBZjhFQkFNQ0FRWXdDZ1lJS29aSXpqMEVBd01EYUFBd1pRSXhBUHlmbFVuTDNqcXc3dnNKDQpTUk5IY3NrVlpOSzRFWWJlMG1zb3RVOXA0K0MrR0c5ejVKdkZ4YnJ3ZWkwZXhLM25ad0l3TFZ6ZGQ3bEFHREwwDQorejFuL2V0eUlUOUcyRll3REZMc1kxZW9qRkk5eXpvdVBoL0t6N3M3eXhmMHhZVFFhTlBuDQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tDQo=}
+      NIS2PME_LICENCAS_URL: ${NIS2PME_LICENCAS_URL:-https://license.nis2pme.pt}
       # CORS_ORIGINS not set here: auto-derived from APP_URL by the backend
     volumes:
       - nis2pme_uploads:/app/uploads

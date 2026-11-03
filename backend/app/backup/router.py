@@ -77,6 +77,8 @@ def listar(utilizador: CurrentUserDep, db: SessionDep):
         "agendado": service.obter_agendado(),
         "retencao": service.retencao_em_vigor(db),
         "backups": service.listar_backups(),
+        "premium_pendente": service.premium_pendente(),
+        "premium_ativo": restaurar._premium_ativo(),
     }
 
 
@@ -256,6 +258,59 @@ def executar_restauro(
     return {"ok": True, **resultado}
 
 
+def _dar_premium_pendente_por_resolvido(db, empresa_id) -> None:
+    from app.notificacoes.catalogo import Codigo
+    from app.notificacoes.service import marcar_lidas_por_chave_prefixo
+
+    marcar_lidas_por_chave_prefixo(db, prefixo=Codigo.BACKUP_PREMIUM_PENDENTE, empresa_id=empresa_id)
+
+
+@router.post(
+    "/premium-pendente/repor",
+    summary="Repor os dados premium que um restauro deixou no backup",
+    dependencies=[_OperarBackup],
+)
+def repor_premium_pendente(
+    dados: PassphraseIn, request: Request, utilizador: CurrentUserDep, db: SessionDep
+):
+    """Com os módulos premium já ativos: decifra o backup com a frase-secreta dele,
+    faz um backup de segurança e entrega os dados premium ao sidecar."""
+    empresa = get_empresa_ativa(db, utilizador)
+    try:
+        resultado = restaurar.repor_premium_pendente(dados.passphrase)
+    except RestauroErro as erro:
+        raise _erro_restauro(erro)
+    registar_acao(
+        db, acao=Acao.BACKUP_PREMIUM_REPOSTO, empresa_id=empresa.id,
+        utilizador_id=utilizador.id,
+        dados_novos={"ficheiro": resultado["ficheiro"], "backup_seguranca": resultado["backup_seguranca"]},
+        request=request,
+    )
+    _dar_premium_pendente_por_resolvido(db, empresa.id)
+    db.commit()
+    return resultado
+
+
+@router.delete(
+    "/premium-pendente",
+    status_code=204,
+    summary="Desistir dos dados premium que um restauro deixou no backup",
+    dependencies=[_OperarBackup],
+)
+def descartar_premium_pendente(request: Request, utilizador: CurrentUserDep, db: SessionDep):
+    empresa = get_empresa_ativa(db, utilizador)
+    try:
+        ficheiro = restaurar.descartar_premium_pendente()
+    except RestauroErro as erro:
+        raise _erro_restauro(erro)
+    registar_acao(
+        db, acao=Acao.BACKUP_PREMIUM_DESCARTADO, empresa_id=empresa.id,
+        utilizador_id=utilizador.id, dados_novos={"ficheiro": ficheiro}, request=request,
+    )
+    _dar_premium_pendente_por_resolvido(db, empresa.id)
+    db.commit()
+
+
 @router.get(
     "/{ficheiro}/download",
     summary="Descarregar um backup",
@@ -291,6 +346,9 @@ def apagar(
 ):
     empresa = get_empresa_ativa(db, utilizador)
     caminho = service.caminho_backup(ficheiro)
+    if (service.premium_pendente() or {}).get("ficheiro") == ficheiro:
+        # Tem os dados premium por repor: primeiro repõem-se ou descartam-se.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"codigo": "premium_pendente"})
     caminho.unlink()
     registar_acao(
         db, acao=Acao.BACKUP_ELIMINADO, empresa_id=empresa.id,

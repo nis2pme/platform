@@ -45,7 +45,7 @@ class Settings(BaseSettings):
 
     # --- Aplicação ---
     APP_NAME: str = "NIS2PME"
-    APP_VERSION: str = "0.4.1"
+    APP_VERSION: str = "0.4.2"
     DEBUG: bool = False
     # Activar Swagger UI / ReDoc explicitamente, independente do flag DEBUG.
     # Em produção deve ser False mesmo que DEBUG fique True acidentalmente (CWE-215).
@@ -167,6 +167,10 @@ class Settings(BaseSettings):
     # diretório de auditores podem ser servidos com um certificado dela: o core
     # junta-a às CAs públicas só nesses pedidos. Vazio = só as CAs públicas.
     NIS2PME_TLS_CA_PEM: str = ""
+
+    # Serviço de licenças do fornecedor: o pedido dos módulos premium pelo interface
+    # (on-prem) fala com ele, com a CA acima, só enquanto há um pedido em aberto.
+    NIS2PME_LICENCAS_URL: str = "https://license.nis2pme.pt"
 
     # --- Ecossistema do dossiê: chave pública mestra NIS2PME ---
     # Valida as atestações de chave (a boleia que dispensa a confirmação manual do
