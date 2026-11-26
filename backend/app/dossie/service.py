@@ -226,9 +226,10 @@ def gerar_dossie(
         try:
             convite_info = crypto.verificar_convite(convite)
         except crypto.ConviteInvalido as erro:
+            codigo = "convite_expirado" if isinstance(erro, crypto.ConviteExpirado) else "convite_invalido"
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"codigo": "convite_invalido", "detalhe": str(erro)},
+                detail={"codigo": codigo, "detalhe": str(erro)},
             ) from erro
         fixado = auditor_fixado(db, empresa, convite_info["auditor_pub"])
         if (
@@ -471,7 +472,7 @@ def relay_permitido(url: str) -> bool:
     )
 
 
-def enviar_para_relay(dossie_path: Path, relay: dict) -> dict:
+def enviar_para_relay(dossie_path: Path, relay: dict, resposta_hash: str | None = None) -> dict:
     """Faz upload do ficheiro .nis2pme (cifrado ponta-a-ponta) para o relay
     indicado no convite, em streaming a partir do disco — o ficheiro nunca é
     carregado inteiro em memória. O relay é um correio cego: recebe bytes
@@ -479,6 +480,10 @@ def enviar_para_relay(dossie_path: Path, relay: dict) -> dict:
     plaintext.
 
     `relay` = {url, convite_id, token_upload} (validado por verificar_convite).
+    `resposta_hash`: SHA-256 do token de resposta desta instância; o relay abre
+    com ele o canal por onde o parecer do auditor volta (ver relay_canal.py).
+    Um relay de versão anterior ignora-o, e a resposta não traz
+    `canal_resposta`.
     Levanta HTTPException com um código estável em caso de recusa do relay, ou
     400 `relay_nao_permitido` se o host não estiver na lista (sem pedido).
     """
@@ -494,18 +499,18 @@ def enviar_para_relay(dossie_path: Path, relay: dict) -> dict:
         )
     # O id vem do convite: vai para o caminho do URL sempre escapado.
     destino = f"{relay['url']}/api/upload/{urllib.parse.quote(relay['convite_id'], safe='')}"
+    cabecalhos = {
+        "Authorization": f"Bearer {relay['token_upload']}",
+        "Content-Type": "application/octet-stream",
+        # urllib não calcula o tamanho de um ficheiro: sem isto
+        # tentaria transferência chunked, que o relay não aceita.
+        "Content-Length": str(dossie_path.stat().st_size),
+    }
+    if resposta_hash:
+        cabecalhos["X-Resposta-Hash"] = resposta_hash
     try:
         with dossie_path.open("rb") as ficheiro:
-            pedido = urllib.request.Request(
-                destino, data=ficheiro, method="PUT",
-                headers={
-                    "Authorization": f"Bearer {relay['token_upload']}",
-                    "Content-Type": "application/octet-stream",
-                    # urllib não calcula o tamanho de um ficheiro: sem isto
-                    # tentaria transferência chunked, que o relay não aceita.
-                    "Content-Length": str(dossie_path.stat().st_size),
-                },
-            )
+            pedido = urllib.request.Request(destino, data=ficheiro, method="PUT", headers=cabecalhos)
             # O relay pode estar servido com um certificado da CA do fornecedor.
             with urllib.request.urlopen(pedido, timeout=120, context=contexto_fornecedor()) as resposta:
                 corpo = resposta.read()

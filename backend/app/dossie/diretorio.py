@@ -77,12 +77,22 @@ def _entrada(e: dict) -> dict:
     }
 
 
+def _url_configurada() -> str:
+    return (get_settings().DIRETORIO_AUDITORES_URL or "").strip()
+
+
+def configurado() -> bool:
+    """Se esta instalação tem diretório. Não contacta ninguém: o ecrã usa-o para
+    só oferecer «Encontrar auditor» onde há a quem perguntar."""
+    return bool(_url_configurada())
+
+
 def procurar(q: str = "", regiao: str = "", idioma: str = "") -> dict:
     """Consulta o diretório com os filtros dados. Devolve `configurado=False`
     (sem pedido) quando a instalação não tem URL; levanta
     `DiretorioIndisponivel` se o serviço falhar."""
     settings = get_settings()
-    url = (settings.DIRETORIO_AUDITORES_URL or "").strip()
+    url = _url_configurada()
     if not url:
         return {"configurado": False, "total": 0, "auditores": []}
 

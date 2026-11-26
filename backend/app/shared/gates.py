@@ -119,6 +119,11 @@ ROTAS_ABERTAS: dict[tuple[str, str], str] = {
         "{auditor}\"). Está num router à parte precisamente para ficar fora do "
         "gate de leitura do dossiê e alimentar o painel de toda a equipa."
     ),
+    ("GET", "/api/dossie/consultoria"): (
+        "Cartão «Consultoria em curso» do painel: data da última revisão, nome do "
+        "consultor, próxima revisão e quantas recomendações faltam. Mesmo caso do "
+        "selo: informação do painel de toda a equipa, sem o conteúdo do parecer."
+    ),
     # ── Notificações: são sempre do próprio ────────────────────────────────────
     # O âmbito sai do token, nunca de um parâmetro: o único conjunto acessível é
     # o de quem está a pedir, e por isso não há nada que uma célula da matriz

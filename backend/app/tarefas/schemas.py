@@ -83,6 +83,10 @@ class TarefaSchema(BaseModel):
     proximo_prazo: date
     ultima_conclusao_at: date | None
     ativa: bool
+    # Nascida de um achado/recomendação de um parecer: a severidade que o
+    # auditor lhe deu e o parecer de onde veio (para abrir o ecrã do parecer).
+    severidade: str | None = None
+    origem_parecer_id: uuid.UUID | None = None
     # Derivados (calculados no service, não persistidos):
     dias_restantes: int | None = None   # até ao próximo prazo (negativo = em atraso)
     em_atraso: bool = False

@@ -399,6 +399,10 @@ class ConviteInvalido(ValueError):
     """O token de convite é malformado, não verifica, ou é inconsistente."""
 
 
+class ConviteExpirado(ConviteInvalido):
+    """O convite passou o prazo que o auditor assinou nele."""
+
+
 def verificar_convite(token: str) -> dict:
     """Descodifica e verifica um token de convite. Devolve os campos úteis
     (convite_id, destinatário age, identidade+atestação do auditor) ou levanta
@@ -440,6 +444,12 @@ def verificar_convite(token: str) -> dict:
     # convite tem de confiar no destino de upload que ele indica.
     relay = _extrair_relay(payload.get("relay"))
 
+    # Prazo assinado pelo auditor. Um convite é um segredo ao portador (traz o
+    # token de upload): com prazo, um convite apanhado numa caixa de correio
+    # deixa de servir. Os convites de versões anteriores da app do auditor não
+    # o trazem e continuam a valer; um prazo presente mas ilegível recusa-se.
+    expira_em = _prazo_do_convite(payload.get("expira_em"))
+
     return {
         "convite_id": convite_id,
         "destinatario_age": destinatario,
@@ -449,7 +459,26 @@ def verificar_convite(token: str) -> dict:
         "atestacao_estado": estado_atest,
         "uso_unico": bool(payload.get("uso_unico", True)),
         "relay": relay,
+        "expira_em": expira_em.isoformat() if expira_em else None,
     }
+
+
+def _prazo_do_convite(valor) -> "datetime | None":
+    """O `expira_em` do convite (ISO 8601 com fuso), já conferido: None se o
+    convite não o traz; ConviteExpirado se passou; ConviteInvalido se ilegível."""
+    from datetime import datetime, timezone
+
+    if valor is None:
+        return None
+    try:
+        prazo = datetime.fromisoformat(valor) if isinstance(valor, str) else None
+    except ValueError:
+        prazo = None
+    if prazo is None or prazo.tzinfo is None:
+        raise ConviteInvalido("prazo do convite ilegível")
+    if prazo <= datetime.now(timezone.utc):
+        raise ConviteExpirado("o convite expirou; peça um novo ao auditor")
+    return prazo
 
 
 def _extrair_relay(bloco) -> dict | None:

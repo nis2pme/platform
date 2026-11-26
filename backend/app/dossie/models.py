@@ -20,6 +20,8 @@ from typing import Optional
 from sqlalchemy import Column, Text, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
+from app.shared.pii import TextoCifrado
+
 
 class DossieGerado(SQLModel, table=True):
     """Registo imutável de um dossiê exportado (nunca guarda o conteúdo)."""
@@ -77,6 +79,12 @@ class AuditorConfiavel(SQLModel, table=True):
     )
     criado_em: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+    # O convite que veio no último ficheiro deste auditor, para o próximo envio
+    # do dossiê sem trocar códigos à mão. É um segredo ao portador: fica cifrado
+    # e nunca vai ao browser. Apaga-se quando é usado.
+    proximo_convite: Optional[str] = Field(default=None, sa_column=Column(Text))
+    proximo_convite_expira_em: Optional[datetime] = Field(default=None)
+
 
 class ParecerImportado(SQLModel, table=True):
     """Registo imutável de um parecer de auditor importado.
@@ -111,6 +119,13 @@ class ParecerImportado(SQLModel, table=True):
     n_achados: int = Field(default=0)
     n_pedidos: int = Field(default=0)
 
+    # "auditoria" (parecer de auditor) ou "consultoria" (trabalho de consultor:
+    # não conta como auditoria externa nem dá selo).
+    natureza: str = Field(default="auditoria", max_length=20)
+    # O parecer.json normalizado (global, controlos, achados, pedidos,
+    # evidências analisadas), cifrado em repouso: é o que o ecrã mostra.
+    conteudo: Optional[str] = Field(default=None, sa_column=Column(Text))
+
     # Quando o auditor emitiu o parecer (do cabeçalho assinado).
     parecer_criado_em: Optional[datetime] = Field(default=None)
 
@@ -120,3 +135,46 @@ class ParecerImportado(SQLModel, table=True):
     importado_em: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc), index=True
     )
+
+
+class DossieCanalRelay(SQLModel, table=True):
+    """Canal de resposta de um dossiê enviado pelo relay.
+
+    Ao enviar o dossiê pelo relay, esta instância manda o hash de um token
+    aleatório que só ela guarda. Com esse token procura e levanta o parecer que
+    o auditor deixar no relay sobre o dossiê. Fica à parte de `dossies_gerados`
+    (que é imutável) porque o canal tem estado que muda.
+
+    Estados: `aguardando` (sem parecer), `disponivel` (há um parecer no relay
+    por importar), `importado` (o último que chegou entrou; o auditor ainda o
+    pode corrigir enquanto o canal estiver aberto), `expirado` (o canal fechou
+    sem parecer importado) e `sem_canal` (o relay já não o conhece).
+    """
+
+    __tablename__ = "dossie_canais_relay"
+
+    # O canal é 1:1 com o dossiê enviado.
+    dossie_gerado_id: uuid.UUID = Field(foreign_key="dossies_gerados.id", primary_key=True)
+    empresa_id: uuid.UUID = Field(foreign_key="empresas.id", index=True)
+
+    # Destino, tal como veio no convite (validado contra RELAY_HOSTS_PERMITIDOS).
+    relay_url: str = Field(max_length=500)
+    relay_convite_id: str = Field(max_length=128)
+    # Token de resposta (256 bits), cifrado em repouso: quem o tiver levanta o
+    # parecer cifrado (não o lê, mas apaga-o do relay).
+    token_resposta: str = Field(sa_column=Column(TextoCifrado, nullable=False))
+
+    estado: str = Field(default="aguardando", max_length=20, index=True)
+    canal_expira_em: datetime = Field()
+    # O parecer que está no relay (sha256 do ficheiro inteiro) e até quando lá fica.
+    parecer_sha256: Optional[str] = Field(default=None, max_length=64)
+    parecer_expira_em: Optional[datetime] = Field(default=None)
+    detetado_em: Optional[datetime] = Field(default=None)
+    # O que entrou por último, e a confirmação ao relay que ficou por fazer (o
+    # relay estava em baixo quando o parecer foi importado).
+    importado_sha256: Optional[str] = Field(default=None, max_length=64)
+    confirmar_sha256: Optional[str] = Field(default=None, max_length=64)
+    lembrete_enviado: bool = Field(default=False)
+    ultima_procura: Optional[datetime] = Field(default=None)
+
+    criado_em: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

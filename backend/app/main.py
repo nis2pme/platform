@@ -149,6 +149,28 @@ async def lifespan(app: FastAPI):
 
     app.state.ticks.append(asyncio.create_task(_loop_conetores()))
 
+    # Pareceres pelo relay: procura, nos canais dos dossiês enviados pelo relay,
+    # o parecer que o auditor lá deixar, e avisa quem pode importá-lo. Só deteta:
+    # importar exige uma pessoa. O tick é horário, com uns minutos ao acaso (as
+    # procuras de muitas instâncias não chegam ao relay todas ao mesmo tempo);
+    # cada canal tem a sua cadência em relay_canal.py.
+    import random
+    from app.dossie.relay_canal import verificar_canais
+
+    async def _loop_pareceres_relay():
+        while True:
+            try:
+                if not em_manutencao():
+                    def _run():
+                        with Session(engine) as _db:
+                            verificar_canais(_db)
+                    await asyncio.to_thread(_run)
+            except Exception:  # noqa: BLE001
+                logger.exception("Tick dos pareceres pelo relay falhou; nova tentativa no próximo ciclo.")
+            await asyncio.sleep(3600 + random.randint(-300, 300))
+
+    app.state.ticks.append(asyncio.create_task(_loop_pareceres_relay()))
+
     # Resumo semanal por email ("a precisar de atenção"): tick horário que só age
     # à segunda-feira de manhã (>= 07:00 UTC). O gate (EMAIL_NOTIFICACOES no .env +
     # email configurado) e o dedup por semana vivem em enviar_digest_semanal —

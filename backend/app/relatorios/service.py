@@ -1142,6 +1142,9 @@ def listar_historico_exportacoes(
     """
     Lista exportações de relatórios da empresa a partir do AuditLog (paginada).
     A tabela AuditLog é append-only — leitura segura sem risco de modificação.
+    Os dossiês gerados também são exportações (saem da plataforma para um
+    auditor ou consultor): entram com o tipo `dossie`, ou `dossie_relay` quando
+    seguiram pelo relay.
     """
     import json as _json
 
@@ -1150,7 +1153,7 @@ def listar_historico_exportacoes(
 
     base_filter = [
         AuditLog.empresa_id == empresa.id,
-        AuditLog.acao == Acao.RELATORIO_EXPORTADO,
+        AuditLog.acao.in_([Acao.RELATORIO_EXPORTADO, Acao.DOSSIE_GERADO]),  # type: ignore[union-attr]
     ]
 
     total_registos: int = db.exec(
@@ -1172,7 +1175,11 @@ def listar_historico_exportacoes(
         tipo = "—"
         if log.dados_novos:
             try:
-                tipo = _json.loads(log.dados_novos).get("tipo", "—")
+                dados = _json.loads(log.dados_novos)
+                if log.acao == Acao.DOSSIE_GERADO:
+                    tipo = "dossie_relay" if dados.get("via") == "relay" else "dossie"
+                else:
+                    tipo = dados.get("tipo", "—")
             except Exception:
                 logger.warning("JSON inválido no AuditLog %s — campo dados_novos não parséavel", log.id)
         items.append(

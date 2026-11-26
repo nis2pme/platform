@@ -87,6 +87,8 @@ class Codigo:
     CONTROLO_APROVADO = "controlo.aprovado"
     CONTROLO_NAO_APROVADO = "controlo.nao_aprovado"
     PARECER_PEDIDO = "parecer.pedido_esclarecimento"
+    PARECER_RELAY_DISPONIVEL = "parecer.relay_disponivel"
+    PARECER_RELAY_A_EXPIRAR = "parecer.relay_a_expirar"
     CONETOR_DRIFT = "conetor.drift"
     CONETOR_CONTRADICAO = "conetor.contradicao"
     BACKUP_SEM_PASSPHRASE = "sistema.backup_sem_passphrase"
@@ -165,6 +167,18 @@ _DEFINICOES: tuple[DefinicaoNotificacao, ...] = (
         Codigo.PARECER_PEDIDO, _C.AUDITORIA, _S.AVISO,
         entidade_tipo="ControloEmpresaV2", dedup=False,
         params_pii=("texto",),
+    ),
+    # params: {"data": str (ISO, quando o dossiê foi gerado), "ate": str (ISO) | None}
+    # O parecer de um auditor sobre um dossiê enviado pelo relay chegou ao relay
+    # e está por importar; o segundo avisa que o relay o apaga em breve. Uma por
+    # parecer (dossiê + sha256 do ficheiro): um parecer corrigido volta a avisar.
+    DefinicaoNotificacao(
+        Codigo.PARECER_RELAY_DISPONIVEL, _C.AUDITORIA, _S.INFO,
+        entidade_tipo="DossieGerado",
+    ),
+    DefinicaoNotificacao(
+        Codigo.PARECER_RELAY_A_EXPIRAR, _C.AUDITORIA, _S.AVISO,
+        entidade_tipo="DossieGerado", substitui=(Codigo.PARECER_RELAY_DISPONIVEL,),
     ),
 
     # --- Conetores (premium): verificação técnica ---------------------------

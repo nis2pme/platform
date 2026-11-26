@@ -88,6 +88,11 @@ class Tarefa(SQLModel, table=True):
     origem_parecer_id: Optional[uuid.UUID] = Field(
         default=None, foreign_key="pareceres_importados.id", nullable=True, index=True
     )
+    # Identificador fixo do achado (ou recomendação) na app do auditor: o mesmo
+    # achado num parecer seguinte atualiza esta tarefa em vez de criar outra.
+    origem_achado_id: Optional[str] = Field(default=None, max_length=36, index=True)
+    # Severidade do achado: baixa, media, alta ou critica.
+    severidade: Optional[str] = Field(default=None, max_length=20)
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

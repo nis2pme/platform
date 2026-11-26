@@ -391,6 +391,10 @@ def montar_conteudo(
                 # auditor fechar o ciclo achado -> tarefa -> resolvido no dossiê
                 # seguinte.
                 "origem_parecer_id": str(t.origem_parecer_id) if t.origem_parecer_id else None,
+                # O id fixo do achado/recomendação na app do auditor (segue-o
+                # entre pareceres) e a severidade que lá lhe deram.
+                "origem_achado_id": t.origem_achado_id,
+                "severidade": t.severidade,
                 "conclusoes": [
                     {
                         "id": str(c.id),
